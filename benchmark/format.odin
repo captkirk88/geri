@@ -10,6 +10,11 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
+format_bytes :: proc(bytes: int) -> string {
+	if bytes <= 0 do return "-"
+	return fmt.tprintf("%M", bytes)
+}
+
 Export_Format :: enum {
 	Console,
 	Markdown,
@@ -17,7 +22,7 @@ Export_Format :: enum {
 	Graph,
 }
 
-Export_Formats :: distinct bit_set[Export_Format; u8]
+Export_Formats :: distinct bit_set[Export_Format;u8]
 
 export_formats: Export_Formats = {.Console}
 
@@ -43,6 +48,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 
 	elapsed_ns := f64(opts.duration)
 	elapsed_val, elapsed_unit := format_duration(elapsed_ns)
+	allocator := runtime.default_allocator()
 
 	if .Console in export_formats {
 		fmt.printf("==========================================\n")
@@ -55,7 +61,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 			fmt.printf(" Average : %.3f %s/run\n", avg_val, avg_unit)
 		}
 		if opts.bytes > 0 {
-			fmt.printf(" Bytes   : %d\n", opts.bytes)
+			fmt.printf(" Bytes   : %s\n", format_bytes(opts.bytes))
 		}
 		fmt.printf("==========================================\n\n")
 	}
@@ -75,10 +81,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 			avg_val, avg_unit := format_duration(elapsed_ns / f64(opts.processed))
 			avg_str = fmt.tprintf("%.3f %s/run", avg_val, avg_unit)
 		}
-		bytes_str := "-"
-		if opts.bytes > 0 {
-			bytes_str = fmt.tprintf("%d", opts.bytes)
-		}
+		bytes_str := format_bytes(opts.bytes)
 		fmt.printf(
 			"| %s | %.3f %s | %d | %s | %s |\n",
 			name,
@@ -106,10 +109,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 			avg_val, avg_unit := format_duration(elapsed_ns / f64(opts.processed))
 			avg_str = fmt.tprintf("%.3f %s/run", avg_val, avg_unit)
 		}
-		bytes_str := "-"
-		if opts.bytes > 0 {
-			bytes_str = fmt.tprintf("%d", opts.bytes)
-		}
+		bytes_str := format_bytes(opts.bytes)
 		fmt.printf(
 			"    <tr><td>%s</td><td>%.3f %s</td><td>%d</td><td>%s</td><td>%s</td></tr>\n",
 			name,
@@ -126,7 +126,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 		append(
 			&results,
 			Benchmark_Result {
-				name = strings.clone(name, runtime.default_allocator()),
+				name = strings.clone(name, allocator),
 				elapsed_ns = elapsed_ns,
 				runs = opts.processed,
 				avg_ns = avg_ns,
@@ -141,9 +141,12 @@ export_graph_image :: proc() {
 		return
 	}
 
+	allocator := runtime.default_allocator()
+
 	min_avg := math.inf_f64(1)
 	max_avg := math.inf_f64(-1)
 	fastest_idx := -1
+	max_bytes := 0
 
 	for res, i in results {
 		if res.avg_ns > 0.0 {
@@ -155,6 +158,9 @@ export_graph_image :: proc() {
 				max_avg = res.avg_ns
 			}
 		}
+		if res.bytes > max_bytes {
+			max_bytes = res.bytes
+		}
 	}
 
 	if min_avg == math.inf_f64(1) || max_avg == math.inf_f64(-1) {
@@ -162,15 +168,19 @@ export_graph_image :: proc() {
 		max_avg = 1.0
 	}
 
+	log_min := math.ln(min_avg)
+	log_max := math.ln(max_avg)
+
 	// Image dimension calculations with scale = 2
 	max_name_len := 0
 	for res in results {
-		if len(res.name) > max_name_len {
-			max_name_len = len(res.name)
+		name_len := len(res.name)
+		if name_len > max_name_len {
+			max_name_len = name_len
 		}
 	}
-	if max_name_len < 10 { max_name_len = 10 }
-	if max_name_len > 40 { max_name_len = 40 }
+	if max_name_len < 10 {max_name_len = 10}
+	if max_name_len > 40 {max_name_len = 40}
 
 	label_col_w := max_name_len * 12
 	bar_x_start := 20 + label_col_w + 20
@@ -180,11 +190,15 @@ export_graph_image :: proc() {
 	factor_x_start := val_x_start + 180 + 15
 	width := factor_x_start + 240 + 20
 
-	N := len(results)
-	height := 60 + N * 60 + 30
+	has_mem := max_bytes > 0
+	row_h := 90 if has_mem else 60
+	total_mem := get_total_physical_memory()
 
-	pixels := make([][4]u8, width * height, runtime.default_allocator())
-	defer delete(pixels, runtime.default_allocator())
+	N := len(results)
+	height := 60 + N * row_h + 30
+
+	pixels := make([][4]u8, width * height, allocator)
+	defer delete(pixels, allocator)
 
 	// Clear background (Dark theme: #18181c)
 	bg_color := [4]u8{24, 24, 28, 255}
@@ -200,7 +214,7 @@ export_graph_image :: proc() {
 	draw_rect(pixels, width, height, 20, 48, width - 40, 2, [4]u8{45, 45, 50, 255})
 
 	for res, i in results {
-		y_row := 60 + i * 60
+		y_row := 60 + i * row_h
 
 		// Draw name label (scale = 2)
 		label_color := [4]u8{200, 200, 200, 255}
@@ -209,8 +223,6 @@ export_graph_image :: proc() {
 		// Bar calculation
 		ratio := 1.0
 		if max_avg > min_avg && res.avg_ns > 0.0 {
-			log_min := math.ln(min_avg)
-			log_max := math.ln(max_avg)
 			log_val := math.ln(res.avg_ns)
 			ratio = 1.0 - (log_val - log_min) / (log_max - log_min)
 		} else if res.avg_ns == 0.0 {
@@ -218,8 +230,8 @@ export_graph_image :: proc() {
 		}
 
 		bar_w := int(math.round(ratio * f64(bar_w_max)))
-		if bar_w < 2 && res.avg_ns > 0.0 { bar_w = 2 }
-		if bar_w > bar_w_max { bar_w = bar_w_max }
+		if bar_w < 2 && res.avg_ns > 0.0 {bar_w = 2}
+		if bar_w > bar_w_max {bar_w = bar_w_max}
 
 		// Draw background track for bar (#2d2d32)
 		track_color := [4]u8{45, 45, 50, 255}
@@ -244,6 +256,48 @@ export_graph_image :: proc() {
 		runs_str := fmt.tprintf("(%d runs)", res.runs)
 		runs_color := [4]u8{160, 160, 160, 255}
 		draw_string(pixels, width, height, runs_str, factor_x_start, y_row + 18, runs_color, 2)
+
+		// Draw memory bar if suite has memory allocations and this benchmark used memory
+		if has_mem && res.bytes > 0 {
+			// Green total memory bar background gradient
+			mem_total_start := [4]u8{39, 174, 96, 255}
+			mem_total_end := [4]u8{46, 204, 113, 255}
+			draw_gradient_rect(
+				pixels,
+				width,
+				height,
+				bar_x_start,
+				y_row + 45,
+				bar_w_max,
+				20,
+				mem_total_start,
+				mem_total_end,
+			)
+
+			// Red used memory bar fill gradient
+			mem_used_start := [4]u8{150, 40, 30, 255}
+			mem_used_end := [4]u8{231, 76, 60, 255}
+			ratio_mem := f64(res.bytes) / f64(total_mem)
+			bar_w_mem := int(math.round(ratio_mem * f64(bar_w_max)))
+			if bar_w_mem < 2 do bar_w_mem = 2
+			if bar_w_mem > bar_w_max do bar_w_mem = bar_w_max
+			draw_gradient_rect(
+				pixels,
+				width,
+				height,
+				bar_x_start,
+				y_row + 45,
+				bar_w_mem,
+				20,
+				mem_used_start,
+				mem_used_end,
+			)
+
+			// Human readable memory label next to memory bar (scale = 2)
+			mem_str := format_bytes(res.bytes)
+			mem_color := [4]u8{240, 240, 240, 255}
+			draw_string(pixels, width, height, mem_str, val_x_start, y_row + 48, mem_color, 2)
+		}
 	}
 
 	// Convert pixel array to image
@@ -257,7 +311,7 @@ export_graph_image :: proc() {
 
 	// Clean up results memory
 	for res in results {
-		delete(res.name, runtime.default_allocator())
+		delete(res.name, allocator)
 	}
 	delete(results)
 	results = nil
@@ -299,7 +353,14 @@ format_duration :: proc(ns: f64) -> (duration: f64, format: string) {
 }
 
 @(private)
-draw_char :: proc(pixels: [][4]u8, width, height: int, c: rune, px, py: int, col: [4]u8, scale: int = 1) {
+draw_char :: proc(
+	pixels: [][4]u8,
+	width, height: int,
+	c: rune,
+	px, py: int,
+	col: [4]u8,
+	scale: int = 1,
+) {
 	idx := int(c) - 32
 	if idx < 0 || idx >= 95 {
 		return
@@ -324,7 +385,14 @@ draw_char :: proc(pixels: [][4]u8, width, height: int, c: rune, px, py: int, col
 }
 
 @(private)
-draw_string :: proc(pixels: [][4]u8, width, height: int, str: string, px, py: int, col: [4]u8, scale: int = 1) {
+draw_string :: proc(
+	pixels: [][4]u8,
+	width, height: int,
+	str: string,
+	px, py: int,
+	col: [4]u8,
+	scale: int = 1,
+) {
 	cx := px
 	for c in str {
 		draw_char(pixels, width, height, c, cx, py, col, scale)
@@ -345,9 +413,34 @@ draw_rect :: proc(pixels: [][4]u8, width, height: int, rx, ry, rw, rh: int, col:
 	}
 }
 
+@(private)
+draw_gradient_rect :: proc(
+	pixels: [][4]u8,
+	width, height: int,
+	rx, ry, rw, rh: int,
+	col_start, col_end: [4]u8,
+) {
+	for dx in 0 ..< rw {
+		t := f64(dx) / f64(rw - 1) if rw > 1 else 0.0
+		r := u8(f64(col_start[0]) + t * f64(int(col_end[0]) - int(col_start[0])))
+		g := u8(f64(col_start[1]) + t * f64(int(col_end[1]) - int(col_start[1])))
+		b := u8(f64(col_start[2]) + t * f64(int(col_end[2]) - int(col_start[2])))
+		a := u8(f64(col_start[3]) + t * f64(int(col_end[3]) - int(col_start[3])))
+		col := [4]u8{r, g, b, a}
+
+		for dy in 0 ..< rh {
+			px := rx + dx
+			py := ry + dy
+			if px >= 0 && px < width && py >= 0 && py < height {
+				pixels[py * width + px] = col
+			}
+		}
+	}
+}
+
 // Minimal 5x7 ASCII bitmap font (ASCII 32 to 127)
 @(private)
-FONT_5X7 := [95][5]u8{
+FONT_5X7 := [95][5]u8 {
 	{0x00, 0x00, 0x00, 0x00, 0x00}, // Space
 	{0x00, 0x00, 0x5f, 0x00, 0x00}, // !
 	{0x00, 0x07, 0x00, 0x07, 0x00}, // "
