@@ -1,0 +1,12 @@
+# Ignore the vendor directory
+vendor/
+
+# Ignore all markdown files except README.md
+*.md
+!README.md
+!BENCHMARKS.md
+
+# Executables and debug files
+*.exe
+*.pdb
+**test*/**

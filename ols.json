@@ -1,0 +1,21 @@
+{
+    "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
+    "enable_document_symbols": true,
+    "enable_hover": true,
+    "enable_snippets": true,
+    "enable_comp_lit_signature_help_use_docs": true,
+    "enable_checker_only_saved": true,
+    "enable_code_action_invert_if": true,
+    "struct_fields_underscore_visibility": "package",
+    "enable_inlay_hints_implicit_return": true,
+    "enable_inlay_hints_optional_result": true,
+    "enable_inlay_hints_params": true,
+    
+    "collections": [
+        {"name": "ecs", "path": "ecs"},
+        {"name": "libs", "path": "vendor"},
+        {"name": "logging", "path": "logging"},
+        { "name": "reflect", "path": "reflect" },
+        { "name": "benchmark", "path": "benchmark" }
+    ]
+}
