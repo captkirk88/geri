@@ -1,50 +1,50 @@
 [tasks.test]
 quiet = true
 run = [
-    "cmd /c if not exist build mkdir build",
-    { task = "update_deps" },
-    "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}}",
+  "cmd /c if not exist build mkdir build",
+  { task = "update_deps" },
+  "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}}",
 ]
 
 [tasks.bench]
 interactive = true
 quiet = true
-env = { BENCH_FORMAT = "markdown" }
+env = { BENCH_FORMAT = "{{ env.BENCH_FORMAT | default(value='markdown;graph') }}" }
 run = [
-    { task = "make_build" },
-    { task = "update_deps" },
-    "odin test benches {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} > BENCHMARKS.md",
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin test benches {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} > BENCHMARKS.md",
 ]
 
 [tasks.try]
 interactive = true
 run = [
-    { task = "make_build" },
-    { task = "update_deps" },
-    "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build}} {{vars.collections}}",
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build}} {{vars.collections}}",
 ]
 
 [tasks.make_build]
 quiet = true
 run = [
-    "cmd /c if not exist build mkdir build",
+  "cmd /c if not exist build mkdir build",
 ]
 hide = true
 
 [tasks.build]
 quiet = true
 run = [
-    { task = "make_build" },
-    { task = "update_deps" },
-    "odin build run.odin -file {{vars.vet}} {{vars.target}} {{vars.build}} {{vars.collections}}",
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin build run.odin -file {{vars.vet}} {{vars.target}} {{vars.build}} {{vars.collections}}",
 ]
 
 [tasks.debug]
 interactive = true
 run = [
-    { task = "make_build" },
-    { task = "update_deps" },
-    "odin run run.odin -file {{vars.vet}} {{vars.target}} -debug {{vars.collections}} -out:build/debug.exe",
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin run run.odin -file {{vars.vet}} {{vars.target}} -debug {{vars.collections}} -out:build/debug.exe",
 ]
 
 [tasks.clean]

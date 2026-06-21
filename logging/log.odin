@@ -672,42 +672,11 @@ deinit_log :: proc "contextless" () {
 	logger = {}
 }
 
-create :: proc() {
-	if (logger.procedure != nil) {
-		return
-	}
-
-	context.allocator = runtime.default_allocator()
-
-	logger = log.Logger {
-		procedure    = custom_logger_proc,
-		data         = nil,
-		lowest_level = .Debug,
-		options      = log.Default_Console_Logger_Opts,
-	}
-
-	log_outputs = make([dynamic]Log_Output, runtime.default_allocator())
-	append(&log_outputs, create_console_output(.Info, DEFAULT_CONSOLE_FORMAT))
-}
-
-destroy :: proc() {
-	if (logger.procedure == nil) {
-		return
-	}
-
-	context.allocator = runtime.default_allocator()
-
-	for &output in log_outputs {
-		close_output(&output)
-	}
-	delete(log_outputs)
-	log_outputs = nil
-
-	logger = {}
-}
-
 // Log a formatted debug message
 debug :: proc(format: string, args: ..any, location := #caller_location) {
+	if !ODIN_DEBUG && !ODIN_TEST {
+		return
+	}
 	context.logger = logger
 	if len(args) > 0 {
 		log.logf(.Debug, format, ..args, location = location)

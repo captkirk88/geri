@@ -1,9 +1,13 @@
+# Benchmark Results
+
+![Benchmark Graph](BENCHMARKS.bmp)
+
 | Benchmark | Elapsed | Runs | Average | Bytes |
 | :--- | :--- | :--- | :--- | :--- |
-| Spawn Entities | 25.212 ms | 1000000 | 25.212 ns/run | - |
-| Add Component | 286.234 ms | 1000000 | 286.234 ns/run | - |
-| Add Component Bulk (1000000) | 1.081 s | 1000 | 1.081 ms/run | - |
-| Query System (1000000) | 129.853 ms | 1000 | 129.853 us/run | - |
-| Systems Runner | 196.000 us | 1000 | 196.000 ns/run | - |
-| Serialize/Patch Entity | 12.040 ms | 1000 | 12.040 us/run | - |
-| Serialize/Deserialize Resources | 10.311 ms | 1000 | 10.311 us/run | - |
+| Spawn Entities | 24.292 ms | 1000000 | 24.292 ns/run | - |
+| Add Component | 281.413 ms | 1000000 | 281.413 ns/run | - |
+| Add Component Bulk (1000000) | 1.132 s | 1000 | 1.132 ms/run | - |
+| Query System (1000000) | 135.196 ms | 1000 | 135.196 us/run | - |
+| Systems Runner | 176.300 us | 1000 | 176.300 ns/run | - |
+| Serialize/Patch Entity | 12.300 ms | 1000 | 12.300 us/run | - |
+| Serialize/Deserialize Resources | 10.764 ms | 1000 | 10.764 us/run | - |

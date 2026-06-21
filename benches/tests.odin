@@ -40,9 +40,6 @@ benchmark_spawn :: proc(t: ^testing.T) {
 }
 
 benchmark_add_component :: proc(t: ^testing.T) {
-	log.create()
-	defer log.destroy()
-
 	test_data :: struct {
 		world: ecs.World,
 		ent:   ecs.Entity,
@@ -72,9 +69,6 @@ benchmark_add_component :: proc(t: ^testing.T) {
 }
 
 benchmark_add_bulk :: proc(t: ^testing.T) {
-	log.create()
-	defer log.destroy()
-
 	test_data :: struct {
 		world:    ecs.World,
 		entities: []ecs.Entity,
@@ -95,7 +89,7 @@ benchmark_add_bulk :: proc(t: ^testing.T) {
 		data.entities[i - 1] = ecs.world_spawn(&data.world)
 	}
 
-	
+
 	bench_title := fmt.aprintf("Add Component Bulk (%d)", data.count)
 	defer delete(bench_title)
 	bench.run(
@@ -114,9 +108,6 @@ benchmark_add_bulk :: proc(t: ^testing.T) {
 }
 
 benchmark_query :: proc(t: ^testing.T) {
-	log.create()
-	defer log.destroy()
-
 	componentA :: struct {
 		value: int,
 	}
@@ -170,8 +161,6 @@ benchmark_query :: proc(t: ^testing.T) {
 
 benchmark_systems :: proc(t: ^testing.T) {
 	using systems
-	log.create()
-	defer log.destroy()
 
 	Config :: struct {
 		value: int,
