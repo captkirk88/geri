@@ -50,7 +50,7 @@ DEFAULT_CONSOLE_FORMAT :: Log_Format {
 }
 
 DEFAULT_FILE_FORMAT :: Log_Format {
-	template     = "[time][location][level][message]",
+	template     = "[[time]][[location]][[level]]: [message]",
 	enable_color = false,
 	time_format  = .Long,
 	options      = log.Default_File_Logger_Opts,

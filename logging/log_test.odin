@@ -128,10 +128,11 @@ test_rolling_file_on_launch :: proc(t: ^testing.T) {
 	defer sync.unlock(&test_mutex)
 
 	clear_outputs()
+	dir := "test_logs_launch"
+	os.remove_all(dir)
+	defer os.remove_all(dir)
 	defer clear_outputs()
 
-	dir := "test_logs_launch"
-	defer os.remove_all(dir)
 
 	// Add rolling file output on launch
 	add_output(
@@ -173,10 +174,10 @@ test_rolling_file_on_day :: proc(t: ^testing.T) {
 	defer sync.unlock(&test_mutex)
 
 	clear_outputs()
-	defer clear_outputs()
-
 	dir := "test_logs_day"
+	os.remove_all(dir)
 	defer os.remove_all(dir)
+	defer clear_outputs()
 
 	add_output(
 		create_rolling_file_output(.Debug, dir, "test_day", .On_Calendar_Day, DEFAULT_FILE_FORMAT),
@@ -188,13 +189,80 @@ test_rolling_file_on_day :: proc(t: ^testing.T) {
 	rf := cast(^Log_Output_Rolling_File)log_outputs[0].ptr
 	testing.expect(t, rf.current_file_handle != nil, "File handle should be open")
 
-	// We can manually change the date to force a roll
-	rf.last_rolled_day = 1 // set it to something different than today to simulate day roll
+	// Save the old path
+	old_path := strings.clone(rf.current_file_path, context.allocator)
+	defer delete(old_path)
 
-	// Log another message to trigger rolling
+	// Close the current file handle so we can rename it.
+	os.close(rf.current_file_handle)
+	rf.current_file_handle = nil
+
+	// Get current date to simulate the past day dynamically
+	t_now := time.now()
+	y, m, d := time.date(t_now)
+	past_day := 20 if d != 20 else 19
+
+	// Rename the file to simulate it being written on a past day.
+	past_path := fmt.aprintf(
+		"%s/test_day_%04d-%02d-%02d.log",
+		dir,
+		y,
+		int(m),
+		past_day,
+		allocator = context.allocator,
+	)
+	defer delete(past_path)
+
+	rename_err := os.rename(old_path, past_path)
+	testing.expectf(t, rename_err == nil, "Failed to rename file: %v", rename_err)
+
+	// Update the rolling file state to make it look like the active file was for the past day.
+	delete(rf.current_file_path, runtime.default_allocator())
+	rf.current_file_path = strings.clone(past_path, runtime.default_allocator())
+	rf.last_rolled_day = past_day
+
+	// Log another message to trigger rolling.
 	info("day msg 2")
 
 	testing.expect(t, rf.current_file_handle != nil, "File handle should be open after roll")
+	testing.expect(t, os.exists(rf.current_file_path), "New log file should exist")
+	testing.expect(t, os.exists(past_path), "Old log file should still exist")
+
+	// Close the handle so we can read both files.
+	os.close(rf.current_file_handle)
+	rf.current_file_handle = nil
+
+	// Read and verify the contents of the past day's file
+	past_data, past_read_err := os.read_entire_file(past_path, context.allocator)
+	testing.expect(t, past_read_err == nil, "Failed to read past log file")
+	defer delete(past_data)
+	past_content := string(past_data)
+	testing.expect(
+		t,
+		strings.contains(past_content, "day msg 1"),
+		"Past file should contain msg 1",
+	)
+	testing.expect(
+		t,
+		!strings.contains(past_content, "day msg 2"),
+		"Past file should not contain msg 2",
+	)
+
+	// Read and verify the contents of today's file
+	today_data, today_read_err := os.read_entire_file(rf.current_file_path, context.allocator)
+	testing.expect(t, today_read_err == nil, "Failed to read today's log file")
+	defer delete(today_data)
+	today_content := string(today_data)
+	testing.expect(
+		t,
+		strings.contains(today_content, "day msg 2"),
+		"Today's file should contain msg 2",
+	)
+	testing.expect(
+		t,
+		!strings.contains(today_content, "day msg 1"),
+		"Today's file should not contain msg 1",
+	)
 }
 
 @(private)
@@ -233,8 +301,8 @@ test_proxy_output :: proc(t: ^testing.T) {
 
 	custom_out := Log_Output {
 		lowest_level = .Debug,
-		write_proc = test_proxy_write,
-		ptr = &buf,
+		write_proc   = test_proxy_write,
+		ptr          = &buf,
 	}
 
 	proxy_out := create_proxy_output(.Info, custom_out)
