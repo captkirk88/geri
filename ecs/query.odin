@@ -3,6 +3,7 @@ package ecs
 import "core:container/intrusive/list"
 import "core:hash"
 import "core:slice"
+import "core:sync"
 import "base:runtime"
 
 /*
@@ -54,6 +55,9 @@ hash_filter_info :: proc(op: Filter_Op, types: []typeid, target: Entity, relatio
 
 @(private)
 world_resolve_term :: proc(w: ^World, term: Term) -> typeid {
+	sync.mutex_lock(&w.cache_mutex)
+	defer sync.mutex_unlock(&w.cache_mutex)
+	
 	types := term.types
 	if w.filter_registry == nil {
 		w.filter_registry = make(map[typeid]Filter_Info, 16, w.allocator)

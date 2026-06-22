@@ -614,5 +614,6 @@ run_all_benchmarks :: proc(t: ^testing.T) {
 	benchmark_systems(t)
 	benchmark_app_schedules(t)
 	benchmark_serialization(t)
-	bench.finish_export()
+	// bench.finish_export()
 }
+

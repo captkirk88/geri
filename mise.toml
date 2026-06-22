@@ -2,25 +2,28 @@
 BUILD_OUTPUT_DIR = "build/"
 
 vet = "-vet-style"
-target = "-target:windows_amd64"
-collections = "-collection:ecs=ecs -collection:logging=logging -collection:reflect=reflect -collection:benchmark=benchmark -collection:libs=vendor"
-build_lib = "-build-mode:shared -o:speed -lto:thin -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
-build_exe = "-o:speed -lto:thin -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
-test = "-keep-executable -all-packages -o:speed -lto:thin -out:build/tests.exe"
+target = ""
+collections = "-collection:ecs=ecs -collection:logging=logging -collection:reflect=reflect -collection:benchmark=benchmark -collection:libs=vendor -collection:os=os -collection:specs=specs"
+build_lib_win = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
+build_lib_other = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
+build_exe_win = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
+build_exe_other = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try"
+test = "-all-packages -o:speed -define:ODIN_TEST_FANCY=false"
 
 [tasks.test]
 quiet = true
+depends = ["build-odin", "install-odpkg"]
 run = [
-  "cmd /c if not exist build mkdir build",
+  { task = "make_build" },
   { task = "update_deps" },
   "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}}",
-  { task = "clean" }
 ]
 
 [tasks.bench]
 interactive = true
 quiet = true
 env = { BENCH_FORMAT = "{{ env.BENCH_FORMAT | default(value='markdown;graph') }}" }
+depends = ["build-odin", "install-odpkg"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
@@ -29,18 +32,25 @@ run = [
 
 [tasks.try]
 interactive = true
+depends = ["build-odin", "install-odpkg"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build_exe}} {{vars.collections}}",
+  "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build_exe_other}} {{vars.collections}}",
+  { task = "clean" }
+]
+run_windows = [
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build_exe_win}} {{vars.collections}}",
   { task = "clean" }
 ]
 
 [tasks.make_build]
 quiet = true
-run = [
-  "cmd /c if not exist build mkdir build",
-]
+depends = "clean"
+run = "mkdir -p build"
+run_windows = "powershell -Command \"New-Item -ItemType Directory -Force build | Out-Null\""
 hide = true
 
 [tasks.build]
@@ -48,11 +58,17 @@ quiet = true
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin build ecs {{vars.vet}} {{vars.target}} {{vars.build_lib}} {{vars.collections}}",
+  "odin build ecs {{vars.vet}} {{vars.target}} {{vars.build_lib_other}} {{vars.collections}}",
+]
+run_windows = [
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin build ecs {{vars.vet}} {{vars.target}} {{vars.build_lib_win}} {{vars.collections}}",
 ]
 
 [tasks.debug]
 interactive = true
+depends = ["build-odin", "install-odpkg"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
@@ -65,6 +81,71 @@ quiet = true
 run = ["rm -rf build", "rm -rf *.exe", "rm -rf *.pdb"]
 
 [tasks.update_deps]
+depends = ["build-odin", "install-odpkg"]
 hide = true
 quiet = true
-run = ["odpkg update"]
+run = """
+  if [ -f "./odpkg.toml" ]; then
+    odpkg update
+  fi
+"""
+run_windows = """
+powershell -c "
+if (touch -c "./odpkg.toml") { odpkg update }
+"
+"""
+
+[tasks.build-odin]
+description = "Build Odin vendor libraries (STB)"
+quiet = true
+run = """
+ODIN_ROOT=$(dirname $(which odin))
+if [ -f "$ODIN_ROOT/vendor/stb/lib/stb_sprintf.a" ]; then
+  echo "=> STB vendor libraries already built, skipping."
+  exit 0
+fi
+echo "=> Building STB vendor libraries in $ODIN_ROOT/vendor/stb/src..."
+make -C "$ODIN_ROOT/vendor/stb/src"
+echo "=> Done!"
+"""
+run_windows = ""
+
+[tasks.install-odpkg]
+description = "Install odpkg from GitHub and build it"
+interactive = true
+quiet = true
+run = """
+if command -v odpkg &> /dev/null; then
+  echo "=> odpkg already installed, skipping."
+  exit 0
+fi
+echo "=> Installing build dependencies libcurl4-openssl-dev and zlib1g-dev (requires sudo)..."
+sudo apt-get install -y libcurl4-openssl-dev zlib1g-dev
+TMP_DIR=$(mktemp -d)
+echo "=> Cloning odpkg..."
+git clone https://github.com/bymehul/odpkg "$TMP_DIR"
+echo "=> Building odpkg..."
+odin build "$TMP_DIR/src" -out:"$TMP_DIR/odpkg" -o:speed -extra-linker-flags:"-L/lib/x86_64-linux-gnu"
+echo "=> Installing to /usr/bin..."
+sudo mv "$TMP_DIR/odpkg" /usr/bin/odpkg
+rm -rf "$TMP_DIR"
+echo "=> Done! odpkg installed successfully."
+"""
+run_windows = """
+powershell -c "
+  if (Get-Command odpkg -ErrorAction SilentlyContinue) {
+    Write-Host '=> odpkg already installed, skipping.'
+    exit 0
+  }
+  $TmpDir = Join-Path $env:TEMP ('odpkg-' + (Get-Random))
+  Write-Host '=> Cloning odpkg...'
+  git clone https://github.com/bymehul/odpkg $TmpDir
+  Write-Host '=> Building odpkg...'
+  odin build (Join-Path $TmpDir 'src') -out:(Join-Path $TmpDir 'odpkg.exe') -o:speed
+  $OdinDir = Split-Path (Get-Command odin).Source
+  Write-Host '=> Installing to' $OdinDir
+  Move-Item (Join-Path $TmpDir 'odpkg.exe') (Join-Path $OdinDir 'odpkg.exe') -Force
+  Remove-Item -Recurse -Force $TmpDir
+  Write-Host '=> Done! odpkg installed successfully.'
+"
+"""

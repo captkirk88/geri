@@ -9,6 +9,7 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "specs:."
 
 format_bytes :: proc(bytes: int) -> string {
 	if bytes <= 0 do return "-"
@@ -26,8 +27,21 @@ Export_Formats :: distinct bit_set[Export_Format;u8]
 
 export_formats: Export_Formats = {.Console}
 
+_console_header_printed := false
 _md_header_printed := false
 _html_header_printed := false
+
+_sys_specs: specs.SystemSpecs
+_sys_specs_loaded := false
+
+@(private)
+get_or_load_specs :: proc() -> specs.SystemSpecs {
+	if !_sys_specs_loaded {
+		_sys_specs = specs.get_specs(runtime.default_allocator())
+		_sys_specs_loaded = true
+	}
+	return _sys_specs
+}
 
 _md_builder: strings.Builder
 _html_builder: strings.Builder
@@ -35,7 +49,7 @@ _html_builder: strings.Builder
 @(private)
 write_md :: proc(format: string, args: ..any) {
 	if _md_builder.buf == nil {
-		strings.builder_init(&_md_builder, context.allocator)
+		strings.builder_init(&_md_builder, runtime.default_allocator())
 	}
 	fmt.sbprintf(&_md_builder, format, ..args)
 }
@@ -43,7 +57,7 @@ write_md :: proc(format: string, args: ..any) {
 @(private)
 write_html :: proc(format: string, args: ..any) {
 	if _html_builder.buf == nil {
-		strings.builder_init(&_html_builder, context.allocator)
+		strings.builder_init(&_html_builder, runtime.default_allocator())
 	}
 	fmt.sbprintf(&_html_builder, format, ..args)
 }
@@ -71,6 +85,16 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 	allocator := runtime.default_allocator()
 
 	if .Console in export_formats {
+		if !_console_header_printed {
+			s := get_or_load_specs()
+			fmt.printf("==========================================\n")
+			fmt.printf(" System Specs:\n")
+			fmt.printf(" CPU : %s (%d physical cores, %d logical cores)\n", s.cpu_model, s.cpu_cores_phys, s.cpu_cores_log)
+			fmt.printf(" GPU : %s\n", s.gpu_model)
+			fmt.printf(" RAM : %s\n", format_bytes(int(s.ram_total)))
+			fmt.printf("==========================================\n\n")
+			_console_header_printed = true
+		}
 		fmt.printf("==========================================\n")
 		fmt.printf(" Benchmark: %s\n", name)
 		fmt.printf("==========================================\n")
@@ -88,8 +112,14 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 
 	if .Markdown in export_formats {
 		if !_md_header_printed {
+			s := get_or_load_specs()
+			write_md("# Benchmark Results\n\n")
+			write_md("### System Specs\n")
+			write_md("- **CPU**: %s (%d physical cores, %d logical cores)\n", s.cpu_model, s.cpu_cores_phys, s.cpu_cores_log)
+			write_md("- **GPU**: %s\n", s.gpu_model)
+			write_md("- **RAM**: %s\n\n", format_bytes(int(s.ram_total)))
+
 			if .Graph in export_formats {
-				write_md("# Benchmark Results\n\n")
 				write_md("![Benchmark Graph](BENCHMARKS.bmp)\n\n")
 			}
 			write_md("| Benchmark | Elapsed | Runs | Average | Bytes |\n")
@@ -115,6 +145,13 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 
 	if .HTML in export_formats {
 		if !_html_header_printed {
+			s := get_or_load_specs()
+			write_html("<h3>System Specs</h3>\n")
+			write_html("<ul>\n")
+			write_html("  <li><strong>CPU:</strong> %s (%d physical cores, %d logical cores)</li>\n", s.cpu_model, s.cpu_cores_phys, s.cpu_cores_log)
+			write_html("  <li><strong>GPU:</strong> %s</li>\n", s.gpu_model)
+			write_html("  <li><strong>RAM:</strong> %s</li>\n", format_bytes(int(s.ram_total)))
+			write_html("</ul>\n")
 			write_html("<table>\n")
 			write_html("  <thead>\n")
 			write_html(
@@ -142,6 +179,9 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 	}
 
 	if .Graph in export_formats {
+		if results.allocator.procedure == nil {
+			results.allocator = runtime.default_allocator()
+		}
 		avg_ns := elapsed_ns / f64(opts.processed) if opts.processed > 0 else 0.0
 		append(
 			&results,
@@ -215,7 +255,7 @@ export_graph_image :: proc() {
 	total_mem := get_total_physical_memory()
 
 	N := len(results)
-	height := 60 + N * row_h + 30
+	height := 120 + N * row_h + 30
 
 	pixels := make([][4]u8, width * height, allocator)
 	defer delete(pixels, allocator)
@@ -226,15 +266,23 @@ export_graph_image :: proc() {
 		pixels[p] = bg_color
 	}
 
+	s := get_or_load_specs()
+
 	// Draw Title (scale = 2)
 	title_color := [4]u8{255, 255, 255, 255}
 	draw_string(pixels, width, height, "Benchmark Results", 20, 20, title_color, 2)
 
+	// Draw Specs (scale = 2)
+	specs_color := [4]u8{180, 180, 180, 255}
+	draw_string(pixels, width, height, fmt.tprintf("CPU: %s (%d physical cores, %d logical cores)", s.cpu_model, s.cpu_cores_phys, s.cpu_cores_log), 20, 48, specs_color, 2)
+	draw_string(pixels, width, height, fmt.tprintf("GPU: %s", s.gpu_model), 20, 68, specs_color, 2)
+	draw_string(pixels, width, height, fmt.tprintf("RAM: %s", format_bytes(int(s.ram_total))), 20, 88, specs_color, 2)
+
 	// Separator line
-	draw_rect(pixels, width, height, 20, 48, width - 40, 2, [4]u8{45, 45, 50, 255})
+	draw_rect(pixels, width, height, 20, 108, width - 40, 2, [4]u8{45, 45, 50, 255})
 
 	for res, i in results {
-		y_row := 60 + i * row_h
+		y_row := 120 + i * row_h
 
 		// Draw name label (scale = 2)
 		label_color := [4]u8{200, 200, 200, 255}
@@ -347,6 +395,7 @@ format_finish_export :: proc() {
 		if _html_builder.buf != nil {
 			_ = os.write_entire_file("BENCHMARKS.html", _html_builder.buf[:])
 			strings.builder_destroy(&_html_builder)
+			_html_builder.buf = nil
 		}
 	}
 	if .Markdown in export_formats {
@@ -354,10 +403,16 @@ format_finish_export :: proc() {
 		if _md_builder.buf != nil {
 			_ = os.write_entire_file("BENCHMARKS.md", _md_builder.buf[:])
 			strings.builder_destroy(&_md_builder)
+			_md_builder.buf = nil
 		}
 	}
 	if .Graph in export_formats {
 		export_graph_image()
+	}
+	_console_header_printed = false
+	if _sys_specs_loaded {
+		specs.free_specs(_sys_specs, runtime.default_allocator())
+		_sys_specs_loaded = false
 	}
 }
 

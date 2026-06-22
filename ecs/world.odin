@@ -5,6 +5,7 @@ import "core:hash"
 import "core:mem"
 import "core:slice"
 import "core:testing"
+import "core:sync"
 import "events"
 
 
@@ -65,6 +66,7 @@ World :: struct {
 	resource_serialization_names: map[string]typeid,
 	resource_serialization_types: map[typeid]string,
 	query_cache:                  map[u64]QueryIter,
+	cache_mutex:                  sync.Mutex,
 }
 
 new_world :: proc(allocator := context.allocator) -> World {
@@ -253,6 +255,8 @@ world_remove_system :: proc(w: ^World, sys: rawptr) {
 }
 
 world_clear_query_cache :: proc(w: ^World) {
+	sync.mutex_lock(&w.cache_mutex)
+	defer sync.mutex_unlock(&w.cache_mutex)
 	for _, iter in w.query_cache {
 		delete(cast([]^Archetype)iter, w.allocator)
 	}
@@ -943,9 +947,12 @@ _query_internal :: proc(w: ^World, terms: []any) -> QueryIter {
 	h := hash.fnv64a(slice.to_bytes(tids))
 
 	// 4. Check cache
+	sync.mutex_lock(&w.cache_mutex)
 	if cached, ok := w.query_cache[h]; ok {
+		sync.mutex_unlock(&w.cache_mutex)
 		return cached
 	}
+	sync.mutex_unlock(&w.cache_mutex)
 
 	// 5. Cache miss: evaluate query
 	q := query_init(w, terms)
@@ -959,11 +966,18 @@ _query_internal :: proc(w: ^World, terms: []any) -> QueryIter {
 		}
 	}
 
+	sync.mutex_lock(&w.cache_mutex)
+	if cached, ok := w.query_cache[h]; ok {
+		sync.mutex_unlock(&w.cache_mutex)
+		return cached
+	}
+
 	// Store in cache (allocated using world allocator)
 	cached_iter := make([]^Archetype, len(results), w.allocator)
 	copy(cached_iter, results[:])
 	iter := cast(QueryIter)cached_iter
 	w.query_cache[h] = iter
+	sync.mutex_unlock(&w.cache_mutex)
 
 	return iter
 }

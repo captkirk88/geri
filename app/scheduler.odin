@@ -8,6 +8,7 @@ import "base:runtime"
 import "core:bufio"
 import "core:container/queue"
 import "core:fmt"
+import "core:mem"
 import "core:sync"
 import "core:thread"
 
@@ -35,6 +36,12 @@ Schedule :: struct {
 
 // Worker thread procedure for executing systems from the schedule's queue.
 worker_proc :: proc(t: ^thread.Thread) {
+	context = runtime.default_context()
+	temp_alloc: runtime.Default_Temp_Allocator
+	runtime.default_temp_allocator_init(&temp_alloc, 4 * mem.Megabyte, context.allocator)
+	context.temp_allocator = runtime.default_temp_allocator(&temp_alloc)
+	defer runtime.default_temp_allocator_destroy(&temp_alloc)
+
 	sched := (^Schedule)(t.data)
 
 	for {
@@ -100,7 +107,6 @@ schedule_destroy :: proc(w: ^ecs.World, sched: ^Schedule) {
 	queue.destroy(&sched.task_queue)
 
 	sync.mutex_lock(&sched.mutex)
-	defer sync.mutex_unlock(&sched.mutex)
 
 	for meta in sched.systems {
 		sys.destroy_system(w, meta.system, w.allocator)
@@ -113,6 +119,8 @@ schedule_destroy :: proc(w: ^ecs.World, sched: ^Schedule) {
 		delete(lvl)
 	}
 	delete(sched.levels)
+
+	sync.mutex_unlock(&sched.mutex)
 
 	free(sched, w.allocator)
 }

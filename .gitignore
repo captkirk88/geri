@@ -10,4 +10,5 @@ vendor/
 build/
 *.exe
 *.pdb
+*.bin
 **test*/**
