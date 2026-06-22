@@ -63,8 +63,13 @@ is_pointer_type :: proc(ti: ^runtime.Type_Info) -> bool {
 
 // Get the size of a typeid
 size_of_type :: proc(tid: typeid) -> int {
+	val := transmute(uintptr)tid
+	if val > 0 && val < 0x100000 {
+		return 0
+	}
 	return runtime.type_info_base(type_info_of(tid)).size
 }
+
 
 // Get procedure parameters type info
 get_procedure_params :: proc(info: ^runtime.Type_Info) -> (runtime.Type_Info_Parameters, bool) {

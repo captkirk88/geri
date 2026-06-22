@@ -109,9 +109,6 @@ world_destroy :: proc(w: ^World) {
 	}
 	delete(w.archetypes)
 
-	for _, v in w.target_index {
-		delete(v)
-	}
 	delete(w.target_index)
 
 	for _, v in w.filter_registry {
@@ -303,6 +300,88 @@ world_get_next_archetype :: proc(w: ^World, current: ^Archetype, add_type: typei
 	}
 
 	return next
+}
+
+@(private)
+_world_transition_type :: proc(
+	w: ^World,
+	entity: Entity,
+	tid: typeid,
+	data: rawptr,
+	size: int,
+	is_tag: bool,
+) {
+	id := u32(entity.id)
+	meta := &w.entities[id]
+	if meta.gen != u32(entity.gen) do return
+
+	current := meta.record.arch
+
+	// Fast Presence Check
+	for t, i in current.types {
+		if t == tid {
+			if !is_tag && data != nil && size > 0 {
+				col := &current.columns[i]
+				mem.copy(
+					&(([^]byte)(col.ptr))[meta.record.row * col.size],
+					data,
+					col.size,
+				)
+			}
+			return
+		}
+	}
+
+	edge, has_edge := current.edges[tid]
+	if !has_edge {
+		world_get_next_archetype(w, current, tid)
+		edge = current.edges[tid]
+	}
+	next := edge.add
+
+	new_row := arch_add_entity(next, entity)
+
+	// Migrate existing components and add the new one
+	if len(current.columns) > 0 {
+		curr_col := 0
+		for next_col, i in next.columns {
+			if i == int(edge.add_index) {
+				if !is_tag && data != nil && size > 0 {
+					mem.copy(
+						&(([^]byte)(next_col.ptr))[new_row * next_col.size],
+						data,
+						next_col.size,
+					)
+				}
+				continue
+			}
+			src_col := current.columns[curr_col]
+			mem.copy(
+				&(([^]byte)(next_col.ptr))[new_row * next_col.size],
+				&(([^]byte)(src_col.ptr))[meta.record.row * src_col.size],
+				src_col.size,
+			)
+			curr_col += 1
+		}
+	} else {
+		// Moving from root: copy the new component if any
+		if !is_tag && data != nil && size > 0 {
+			next_col := &next.columns[edge.add_index]
+			mem.copy(
+				&(([^]byte)(next_col.ptr))[new_row * next_col.size],
+				data,
+				next_col.size,
+			)
+		}
+	}
+
+	moved_entity, was_moved := arch_remove_row(current, meta.record.row)
+	if was_moved {
+		w.entities[u32(moved_entity.id)].record.row = meta.record.row
+	}
+	meta.record.arch = next
+	meta.record.row = new_row
+	trigger_lifecycle(w, .OnAdd, tid, entity)
 }
 
 world_add_component :: proc(w: ^World, entity: Entity, component: $T) {
@@ -1016,3 +1095,15 @@ test_world_despawn :: proc(t: ^testing.T) {
 	world_add_component(&w, e_new, i32(200))
 	testing.expect_value(t, world_get_component(&w, e_new, i32)^, 200)
 }
+
+@(test)
+test_world_relations :: proc(t: ^testing.T) {
+	w := new_world()
+	defer world_destroy(&w)
+
+	e1 := world_spawn(&w)
+	e2 := world_spawn(&w)
+
+	world_add_relation(&w, e1, ChildOf, e2)
+}
+

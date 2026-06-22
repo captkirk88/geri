@@ -19,14 +19,15 @@ Pair :: struct {
 
 /* 
     Utility to check if a typeid represents a relationship pair.
-    We reserve the high bit of the ID for virtual/pair IDs.
+    Virtual/pair IDs are small counter values (less than 1MB) rather than valid pointers.
 */
 is_pair :: #force_inline proc(id: typeid) -> bool {
-	return (transmute(uintptr)id & VIRTUAL_BIT) != 0
+	val := transmute(uintptr)id
+	return val > 0 && val < 0x100000
 }
 
-// Internal constant for bit-tagging virtual typeids
-VIRTUAL_BIT :: uintptr(1) << 63
+// Internal constant for bit-tagging virtual typeids (not used when using small counter values)
+VIRTUAL_BIT :: uintptr(0)
 
 /*
     Example Relations:
