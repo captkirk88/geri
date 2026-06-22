@@ -11,13 +11,21 @@ import "core:testing"
 
 System_Runner :: #type proc(sys: ^System, data: rawptr)
 
+System_Param_Resolve :: struct {
+	builder:   ecs.System_Param_Builder,
+	base_info: ^runtime.Type_Info,
+	offset:    uintptr,
+}
+
 System :: struct {
-	id:          u64,
-	procedure:   rawptr,
-	runner:      System_Runner,
-	params_type: typeid,
-	params_data: rawptr,
-	commands:    ecs.Commands,
+	id:              u64,
+	procedure:       rawptr,
+	runner:          System_Runner,
+	params_type:     typeid,
+	params_data:     rawptr,
+	commands:        ecs.Commands,
+	resolved_params: [dynamic]System_Param_Resolve,
+	resolved:        bool,
 }
 
 Schedule :: struct {
@@ -321,27 +329,77 @@ new_system :: proc(
 	return s
 }
 
+@(private)
+resolve_system_params :: proc(w: ^ecs.World, system: ^System) {
+	if system.resolved do return
+	
+	system.resolved_params = make([dynamic]System_Param_Resolve, w.allocator)
+	
+	if system.params_type == nil {
+		system.resolved = true
+		return
+	}
+
+	info := reflect.base_info_of(system.params_type)
+	params_info, ok := info.variant.(runtime.Type_Info_Parameters)
+	if !ok {
+		system.resolved = true
+		return
+	}
+
+	offset: uintptr = 0
+	for i in 0 ..< len(params_info.types) {
+		field_info := params_info.types[i]
+		offset = mem.align_forward_uintptr(offset, uintptr(field_info.align))
+		
+		base_info := runtime.type_info_base(field_info)
+
+		for builder in w.param_builders {
+			if builder.match(base_info) {
+				append(&system.resolved_params, System_Param_Resolve{
+					builder = builder,
+					base_info = base_info,
+					offset = offset,
+				})
+				break
+			}
+		}
+		offset += uintptr(field_info.size)
+	}
+	
+	system.resolved = true
+}
+
 destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocator) {
 	if sys == nil do return
 	if sys.params_data != nil {
-		info := reflect.base_info_of(sys.params_type)
-		if info.id != typeid_of(any) {
-			params_info := info.variant.(runtime.Type_Info_Parameters)
-			offset: uintptr = 0
-			for i in 0 ..< len(params_info.types) {
-				field_info := params_info.types[i]
-				offset = mem.align_forward_uintptr(offset, uintptr(field_info.align))
-				field_ptr := rawptr(uintptr(sys.params_data) + offset)
-				offset += uintptr(field_info.size)
+		if sys.resolved {
+			for p in sys.resolved_params {
+				field_ptr := rawptr(uintptr(sys.params_data) + p.offset)
+				if p.builder.destroy != nil {
+					p.builder.destroy(rawptr(sys), p.base_info, field_ptr)
+				}
+			}
+			delete(sys.resolved_params)
+		} else {
+			info := reflect.base_info_of(sys.params_type)
+			if params_info, ok := info.variant.(runtime.Type_Info_Parameters); ok {
+				offset: uintptr = 0
+				for i in 0 ..< len(params_info.types) {
+					field_info := params_info.types[i]
+					offset = mem.align_forward_uintptr(offset, uintptr(field_info.align))
+					field_ptr := rawptr(uintptr(sys.params_data) + offset)
+					offset += uintptr(field_info.size)
 
-				base_info := runtime.type_info_base(field_info)
+					base_info := runtime.type_info_base(field_info)
 
-				for builder in w.param_builders {
-					if builder.match(base_info) {
-						if builder.destroy != nil {
-							builder.destroy(rawptr(sys), base_info, field_ptr)
+					for builder in w.param_builders {
+						if builder.match(base_info) {
+							if builder.destroy != nil {
+								builder.destroy(rawptr(sys), base_info, field_ptr)
+							}
+							break
 						}
-						break
 					}
 				}
 			}
@@ -354,49 +412,46 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 	free(sys, allocator)
 }
 
+// Instantiates and maps system parameters (resource pointers, command buffers, event readers/writers) from the world.
+build_system :: proc(w: ^ecs.World, system: ^System) {
+	if system.params_data == nil do return
+
+	if !system.resolved {
+		resolve_system_params(w, system)
+	}
+
+	for p in system.resolved_params {
+		field_ptr := rawptr(uintptr(system.params_data) + p.offset)
+		p.builder.build(w, rawptr(system), p.base_info, field_ptr)
+	}
+}
+
+// Invokes the system procedure, passing the unpacked parameter structure.
+execute_system :: proc(system: ^System) {
+	system.runner(system, system.params_data)
+}
+
+// Flushes and clears any temporary system state (e.g. deferred command buffers and written event histories) back to the world.
+flush_system :: proc(w: ^ecs.World, system: ^System) {
+	if system.params_data == nil do return
+
+	if !system.resolved {
+		resolve_system_params(w, system)
+	}
+
+	for p in system.resolved_params {
+		if p.builder.after_run != nil {
+			field_ptr := rawptr(uintptr(system.params_data) + p.offset)
+			p.builder.after_run(w, rawptr(system), p.base_info, field_ptr)
+		}
+	}
+}
+
+// Runs a system completely: builds its parameters, executes it, and flushes its state.
 run_system :: proc(w: ^ecs.World, sys: ^System) {
-	if sys.params_data == nil do return
-
-	info := reflect.base_info_of(sys.params_type)
-	params_info := info.variant.(runtime.Type_Info_Parameters)
-
-	offset: uintptr = 0
-	for i in 0 ..< len(params_info.types) {
-		field_info := params_info.types[i]
-		offset = mem.align_forward_uintptr(offset, uintptr(field_info.align))
-		field_ptr := rawptr(uintptr(sys.params_data) + offset)
-		offset += uintptr(field_info.size)
-
-		base_info := runtime.type_info_base(field_info)
-
-		for builder in w.param_builders {
-			if builder.match(base_info) {
-				builder.build(w, rawptr(sys), base_info, field_ptr)
-				break
-			}
-		}
-	}
-
-	sys.runner(sys, sys.params_data)
-
-	offset = 0
-	for i in 0 ..< len(params_info.types) {
-		field_info := params_info.types[i]
-		offset = mem.align_forward_uintptr(offset, uintptr(field_info.align))
-		field_ptr := rawptr(uintptr(sys.params_data) + offset)
-		offset += uintptr(field_info.size)
-
-		base_info := runtime.type_info_base(field_info)
-
-		for builder in w.param_builders {
-			if builder.match(base_info) {
-				if builder.after_run != nil {
-					builder.after_run(w, rawptr(sys), base_info, field_ptr)
-				}
-				break
-			}
-		}
-	}
+	build_system(w, sys)
+	execute_system(sys)
+	flush_system(w, sys)
 }
 
 @(test)

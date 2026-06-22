@@ -63,7 +63,7 @@ _fini_benchmarks :: proc "contextless" () {
 }
 
 // A helper to make benchmarking more useful and less verbose.
-run :: proc(
+run_simple :: proc(
 	name: string,
 	count: int,
 	user_data: rawptr,
@@ -77,11 +77,27 @@ run :: proc(
 		count     = count,
 		bench     = bench_fn,
 	}
-
-	time.benchmark(&opts)
-
-	format_run(name, &opts)
+	run_options(name, &opts)
 }
+
+run_options :: proc(name: string, opts: ^time.Benchmark_Options) {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	tracking_alloc := mem.tracking_allocator(&track)
+
+	old_alloc := context.allocator
+	context.allocator = tracking_alloc
+
+	time.benchmark(opts, tracking_alloc)
+
+	opts.bytes = int(track.peak_memory_allocated)
+
+	context.allocator = old_alloc
+	format_run(name, opts)
+}
+
+run :: proc{run_simple, run_options}
 
 // Optional helper to close exports
 finish_export :: proc() {
