@@ -27,7 +27,7 @@ _init_benchmark_format :: proc "contextless" () {
 		idx := strings.index(remaining, ";")
 		if idx >= 0 {
 			part = remaining[:idx]
-			remaining = remaining[idx+1:]
+			remaining = remaining[idx + 1:]
 		} else {
 			remaining = ""
 		}
@@ -80,24 +80,103 @@ run_simple :: proc(
 	run_options(name, &opts)
 }
 
+Bench_Tracking_Allocator :: struct {
+	track:   mem.Tracking_Allocator,
+	enabled: bool,
+}
+
+my_tracking_allocator_proc :: proc(
+	allocator_data: rawptr,
+	mode: mem.Allocator_Mode,
+	size, alignment: int,
+	old_memory: rawptr,
+	old_size: int,
+	loc := #caller_location,
+) -> (
+	result: []byte,
+	err: mem.Allocator_Error,
+) {
+	my_track := (^Bench_Tracking_Allocator)(allocator_data)
+	if my_track.enabled {
+		tracking_alloc := mem.tracking_allocator(&my_track.track)
+		return tracking_alloc.procedure(
+			tracking_alloc.data,
+			mode,
+			size,
+			alignment,
+			old_memory,
+			old_size,
+			loc,
+		)
+	} else {
+		return my_track.track.backing.procedure(
+			my_track.track.backing.data,
+			mode,
+			size,
+			alignment,
+			old_memory,
+			old_size,
+			loc,
+		)
+	}
+}
+
 run_options :: proc(name: string, opts: ^time.Benchmark_Options) {
-	track: mem.Tracking_Allocator
-	mem.tracking_allocator_init(&track, context.allocator)
-	defer mem.tracking_allocator_destroy(&track)
-	tracking_alloc := mem.tracking_allocator(&track)
+	my_track: Bench_Tracking_Allocator
+	mem.tracking_allocator_init(&my_track.track, context.allocator)
+	defer mem.tracking_allocator_destroy(&my_track.track)
+	my_track.enabled = false
+
+	my_allocator := runtime.Allocator {
+		procedure = my_tracking_allocator_proc,
+		data      = &my_track,
+	}
 
 	old_alloc := context.allocator
-	context.allocator = tracking_alloc
+	context.allocator = my_allocator
 
-	time.benchmark(opts, tracking_alloc)
+	if opts.setup != nil {
+		err := opts->setup(my_allocator)
+		if err != .Okay {
+			context.allocator = old_alloc
+			return
+		}
+	}
 
-	opts.bytes = int(track.peak_memory_allocated)
+	my_track.enabled = true
+
+	start := time.tick_now()
+	bench_err := opts->bench(my_allocator)
+	diff := time.tick_since(start)
+	opts.duration = diff
+
+	my_track.enabled = false
+
+	if bench_err != .Okay {
+		context.allocator = old_alloc
+		return
+	}
+
+	opts.bytes = int(my_track.track.peak_memory_allocated)
+
+	if opts.teardown != nil {
+		opts->teardown(my_allocator)
+	}
 
 	context.allocator = old_alloc
+
+	times_per_second := f64(time.Second) / f64(diff)
+	opts.rounds_per_second = times_per_second * f64(opts.count)
+	opts.megabytes_per_second = f64(opts.processed) / f64(1024 * 1024) * times_per_second
+
 	format_run(name, opts)
 }
 
-run :: proc{run_simple, run_options}
+
+run :: proc {
+	run_simple,
+	run_options,
+}
 
 // Optional helper to close exports
 finish_export :: proc() {

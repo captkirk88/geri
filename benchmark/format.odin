@@ -29,6 +29,26 @@ export_formats: Export_Formats = {.Console}
 _md_header_printed := false
 _html_header_printed := false
 
+_md_builder: strings.Builder
+_html_builder: strings.Builder
+
+@(private)
+write_md :: proc(format: string, args: ..any) {
+	if _md_builder.buf == nil {
+		strings.builder_init(&_md_builder, context.allocator)
+	}
+	fmt.sbprintf(&_md_builder, format, ..args)
+}
+
+@(private)
+write_html :: proc(format: string, args: ..any) {
+	if _html_builder.buf == nil {
+		strings.builder_init(&_html_builder, context.allocator)
+	}
+	fmt.sbprintf(&_html_builder, format, ..args)
+}
+
+
 Benchmark_Result :: struct {
 	name:       string,
 	elapsed_ns: f64,
@@ -69,11 +89,11 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 	if .Markdown in export_formats {
 		if !_md_header_printed {
 			if .Graph in export_formats {
-				fmt.printf("# Benchmark Results\n\n")
-				fmt.printf("![Benchmark Graph](BENCHMARKS.bmp)\n\n")
+				write_md("# Benchmark Results\n\n")
+				write_md("![Benchmark Graph](BENCHMARKS.bmp)\n\n")
 			}
-			fmt.printf("| Benchmark | Elapsed | Runs | Average | Bytes |\n")
-			fmt.printf("| :--- | :--- | :--- | :--- | :--- |\n")
+			write_md("| Benchmark | Elapsed | Runs | Average | Bytes |\n")
+			write_md("| :--- | :--- | :--- | :--- | :--- |\n")
 			_md_header_printed = true
 		}
 		avg_str := "-"
@@ -82,7 +102,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 			avg_str = fmt.tprintf("%.3f %s/run", avg_val, avg_unit)
 		}
 		bytes_str := format_bytes(opts.bytes)
-		fmt.printf(
+		write_md(
 			"| %s | %.3f %s | %d | %s | %s |\n",
 			name,
 			elapsed_val,
@@ -95,13 +115,13 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 
 	if .HTML in export_formats {
 		if !_html_header_printed {
-			fmt.printf("<table>\n")
-			fmt.printf("  <thead>\n")
-			fmt.printf(
+			write_html("<table>\n")
+			write_html("  <thead>\n")
+			write_html(
 				"    <tr><th>Benchmark</th><th>Elapsed</th><th>Runs</th><th>Average</th><th>Bytes</th></tr>\n",
 			)
-			fmt.printf("  </thead>\n")
-			fmt.printf("  <tbody>\n")
+			write_html("  </thead>\n")
+			write_html("  <tbody>\n")
 			_html_header_printed = true
 		}
 		avg_str := "-"
@@ -110,7 +130,7 @@ format_run :: proc(name: string, opts: ^time.Benchmark_Options) {
 			avg_str = fmt.tprintf("%.3f %s/run", avg_val, avg_unit)
 		}
 		bytes_str := format_bytes(opts.bytes)
-		fmt.printf(
+		write_html(
 			"    <tr><td>%s</td><td>%.3f %s</td><td>%d</td><td>%s</td><td>%s</td></tr>\n",
 			name,
 			elapsed_val,
@@ -320,13 +340,21 @@ export_graph_image :: proc() {
 format_finish_export :: proc() {
 	if .HTML in export_formats {
 		if _html_header_printed {
-			fmt.printf("  </tbody>\n")
-			fmt.printf("</table>\n")
+			write_html("  </tbody>\n")
+			write_html("</table>\n")
 			_html_header_printed = false
+		}
+		if _html_builder.buf != nil {
+			_ = os.write_entire_file("BENCHMARKS.html", _html_builder.buf[:])
+			strings.builder_destroy(&_html_builder)
 		}
 	}
 	if .Markdown in export_formats {
 		_md_header_printed = false
+		if _md_builder.buf != nil {
+			_ = os.write_entire_file("BENCHMARKS.md", _md_builder.buf[:])
+			strings.builder_destroy(&_md_builder)
+		}
 	}
 	if .Graph in export_formats {
 		export_graph_image()
