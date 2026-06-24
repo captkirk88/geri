@@ -105,8 +105,9 @@ app_add_system :: proc(
 	schedule_add_system(sched, &app.world, procedure, name, before, after)
 }
 
-// Returns true if the schedule label is a rendering schedule (contains "render" case-insensitive).
-is_render_schedule :: proc(label: Schedule_Label) -> bool {
+// Returns true if the schedule label requires the main thread (e.g. rendering, event pumping).
+is_main_thread_schedule :: proc(label: Schedule_Label) -> bool {
+	if label == First do return true
 	label_str := string(label)
 	return strings.contains(strings.to_lower(label_str, context.temp_allocator), "render")
 }
@@ -119,7 +120,7 @@ app_run_schedule :: proc(app: ^App, schedule_label: Schedule_Label) {
 	sync.mutex_unlock(&app.mutex)
 
 	if ok && sched != nil {
-		if is_render_schedule(schedule_label) {
+		if is_main_thread_schedule(schedule_label) {
 			thread_count = 1
 		}
 		schedule_run(&app.world, sched, thread_count)
@@ -133,11 +134,13 @@ app_update :: proc(app: ^App) {
 	app_run_schedule(app, Update)
 	app_run_schedule(app, PostUpdate)
 	app_run_schedule(app, Last)
+	app_run_schedule(app, PreRender)
 	app_run_schedule(app, Render)
+	app_run_schedule(app, PostRender)
 
 	if App_Exit_Event in app.world.event_manager.history {
 		buf := app.world.event_manager.history[App_Exit_Event]
-		if len(buf.data) > 0 {
+		if buf.count > 0 {
 			app.should_exit = true
 		}
 	}

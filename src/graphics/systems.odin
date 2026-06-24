@@ -11,6 +11,7 @@ handle_resize_system :: proc() {
 frame_start_system :: proc(ctx_res: params.Res(Render_Context), fctx_res: params.Res(Frame_Context)) {
 	ctx := ctx_res.ptr
 	fctx := fctx_res.ptr
+	if ctx == nil || ctx.device == nil do return
 
 	surface_tex := wgpu.SurfaceGetCurrentTexture(ctx.surface)
 
@@ -45,6 +46,7 @@ frame_start_system :: proc(ctx_res: params.Res(Render_Context), fctx_res: params
 frame_present_system :: proc(ctx_res: params.Res(Render_Context), fctx_res: params.Res(Frame_Context)) {
 	ctx := ctx_res.ptr
 	fctx := fctx_res.ptr
+	if ctx == nil || ctx.device == nil do return
 	if fctx.encoder == nil || fctx.texture_view == nil do return
 
 	cmd_buffer := wgpu.CommandEncoderFinish(fctx.encoder, nil)

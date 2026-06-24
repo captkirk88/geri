@@ -12,3 +12,6 @@ build/
 *.pdb
 *.bin
 **test*/**
+
+# strudel designs
+*.strudel

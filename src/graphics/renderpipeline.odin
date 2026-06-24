@@ -8,9 +8,16 @@ Clear_Color :: struct {
 	r, g, b, a: f64,
 }
 
-clear_screen_system :: proc(ctx_res: params.Res(Render_Context), fctx_res: params.Res(Frame_Context), clear_color: params.Res(Clear_Color)) {
+main_render_system :: proc(
+	ctx_res: params.Res(Render_Context),
+	fctx_res: params.Res(Frame_Context),
+	clear_color: params.Res(Clear_Color),
+	batch2d: params.Res(Batch2D),
+	batch3d: params.Res(Batch3D),
+) {
 	ctx := ctx_res.ptr
 	fctx := fctx_res.ptr
+	if ctx == nil || ctx.device == nil do return
 	
 	if fctx.encoder == nil || fctx.texture_view == nil do return
 
@@ -22,10 +29,11 @@ clear_screen_system :: proc(ctx_res: params.Res(Render_Context), fctx_res: param
 	}
 
 	color_attachment := wgpu.RenderPassColorAttachment{
-		view = fctx.texture_view,
-		loadOp = .Clear,
-		storeOp = .Store,
+		view       = fctx.texture_view,
+		loadOp     = .Clear,
+		storeOp    = .Store,
 		clearValue = color,
+		depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
 	}
 
 	pass_desc := wgpu.RenderPassDescriptor{
@@ -34,6 +42,15 @@ clear_screen_system :: proc(ctx_res: params.Res(Render_Context), fctx_res: param
 	}
 
 	render_pass := wgpu.CommandEncoderBeginRenderPass(fctx.encoder, &pass_desc)
+
+	if batch3d.ptr != nil {
+		batch3d_flush(batch3d.ptr, ctx, render_pass)
+	}
+
+	if batch2d.ptr != nil {
+		batch2d_flush(batch2d.ptr, ctx, render_pass)
+	}
+
 	wgpu.RenderPassEncoderEnd(render_pass)
 	wgpu.RenderPassEncoderRelease(render_pass)
 }

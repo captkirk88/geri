@@ -20,6 +20,7 @@ Observer_Entry :: struct {
 Event_Buffer :: struct {
 	data:       [dynamic]byte,
 	event_size: int,
+	count:      int,
 }
 
 Event_Manager :: struct {
@@ -91,17 +92,22 @@ trigger :: proc(
 ) {
 	// 1. Handle Global Event Storage (History)
 	sync.rw_mutex_lock(&m.lock)
-	if data != nil {
-		if tid not_in m.history {
-			m.history[tid] = {
-				data       = make([dynamic]byte, m.allocator),
-				event_size = reflect.size_of_type(tid),
-			}
+	if tid not_in m.history {
+		m.history[tid] = {
+			data       = make([dynamic]byte, m.allocator),
+			event_size = reflect.size_of_type(tid),
 		}
-		buf := &m.history[tid]
-		bytes := mem.slice_ptr(cast(^byte)data, buf.event_size)
-		append(&buf.data, ..bytes)
 	}
+	buf := &m.history[tid]
+	if buf.event_size > 0 {
+		if data != nil {
+			bytes := mem.slice_ptr(cast(^byte)data, buf.event_size)
+			append(&buf.data, ..bytes)
+		} else {
+			for _ in 0 ..< buf.event_size do append(&buf.data, 0)
+		}
+	}
+	buf.count += 1
 	sync.rw_mutex_unlock(&m.lock)
 
 	// 2. Trigger Immediate Observers
@@ -126,5 +132,6 @@ clear_events :: proc(m: ^Event_Manager) {
 	defer sync.rw_mutex_unlock(&m.lock)
 	for _, &buf in m.history {
 		clear(&buf.data)
+		buf.count = 0
 	}
 }

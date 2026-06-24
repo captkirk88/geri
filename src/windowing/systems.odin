@@ -15,10 +15,10 @@ event_pump_system :: proc(
 		case .QUIT:
 			params.write(exit_writer, app.App_Exit_Event{})
 		case .WINDOW_RESIZED:
-			params.write(resize_writer, Window_Resized_Event{
-				width  = event.window.data1,
-				height = event.window.data2,
-			})
+			params.write(
+				resize_writer,
+				Window_Resized_Event{width = event.window.data1, height = event.window.data2},
+			)
 		case .WINDOW_CLOSE_REQUESTED:
 			params.write(close_writer, Window_Closed_Event{})
 			params.write(exit_writer, app.App_Exit_Event{})

@@ -8,7 +8,7 @@ build_lib_win = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config
 build_lib_other = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
 build_exe_win = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
 build_exe_other = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try"
-test = "-all-packages -o:speed "  # -define:ODIN_TEST_FANCY=false"
+test = "-all-packages -o:speed -define:ODIN_TEST_THREADS=1 "  # -define:ODIN_TEST_FANCY=false"
 
 [tasks.test]
 quiet = true
@@ -17,6 +17,16 @@ run = [
   { task = "make_build" },
   { task = "update_deps" },
   "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_runner.exe",
+]
+
+[tasks.test-render]
+description = "Run the graphics render pipeline test on the main thread"
+interactive = true
+depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
+run = [
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin run test_render.odin -file {{vars.vet}} {{vars.target}} -o:speed {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe",
 ]
 
 [tasks.bench]
@@ -74,7 +84,7 @@ run = [
 interactive = true
 quiet = true
 silent = true
-run = ["rm -rf **/*.exe", "rm -rf **/*.pdb"]
+run = ["rm -rf build/"]
 
 [tasks.make_build]
 quiet = true

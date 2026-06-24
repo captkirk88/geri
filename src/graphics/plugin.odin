@@ -2,6 +2,7 @@ package graphics
 
 import "../app"
 import "../ecs"
+import "../ecs/params"
 import log "../logging"
 import "../windowing"
 import "core:fmt"
@@ -40,12 +41,14 @@ _on_device :: proc "c" (
 render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	window_ctx := ecs.world_get_resource(&a.world, windowing.Window_Context)
 	if window_ctx == nil || window_ctx.window == nil {
-		fmt.eprintln("Render_Plugin requires Window_Context to be initialized first.")
+		log.error(
+			"Render_Plugin requires Window_Context to be initialized first. Did you forget to add Window_Plugin?",
+		)
 		return
 	}
 
 	instance_extras := wgpu.InstanceExtras {
-		chain = wgpu.ChainedStruct{sType = .InstanceExtras},
+		chain    = wgpu.ChainedStruct{sType = .InstanceExtras},
 		backends = {.DX12}, // Use DX12 to avoid Vulkan SEH exceptions in odin test runner
 	}
 	instance_desc := wgpu.InstanceDescriptor {
@@ -124,11 +127,44 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	app.app_add_resource(a, render_ctx)
 	app.app_add_resource(a, Frame_Context{})
 
+	batch2d := init_batch2d(req_data.device, config.format)
+	app.app_add_resource(a, batch2d)
+	batch3d := init_batch3d(req_data.device, config.format)
+	app.app_add_resource(a, batch3d)
+
 	app.app_add_system(a, app.PreRender, frame_start_system)
+	app.app_add_system(a, app.Render, main_render_system)
 	app.app_add_system(a, app.PostRender, frame_present_system)
+	app.app_add_system(a, app.Last, render_cleanup_system)
 	app.app_add_system(a, app.First, handle_resize_system) // To resize surface
 }
 
+render_cleanup_system :: proc(
+	exit_events: params.EventReader(app.App_Exit_Event),
+	batch2d: params.Res(Batch2D),
+	batch3d: params.Res(Batch3D),
+	render_ctx: params.Res(Render_Context),
+) {
+	if len(exit_events.events) > 0 {
+		if batch2d.ptr != nil do destroy_batch2d(batch2d.ptr)
+		if batch3d.ptr != nil do destroy_batch3d(batch3d.ptr)
+
+		if render_ctx.ptr != nil && render_ctx.ptr.device != nil {
+			wgpu.QueueRelease(render_ctx.ptr.queue)
+			wgpu.DeviceRelease(render_ctx.ptr.device)
+			wgpu.AdapterRelease(render_ctx.ptr.adapter)
+			wgpu.SurfaceRelease(render_ctx.ptr.surface)
+			wgpu.InstanceRelease(render_ctx.ptr.instance)
+			render_ctx.ptr.device = nil
+			render_ctx.ptr.queue = nil
+		}
+	}
+}
+
+render_plugin_destroy :: proc(plugin: app.Plugin, a: ^app.App) {
+	// Cleanup is now handled by render_cleanup_system on App_Exit_Event
+}
+
 Render_Plugin :: proc() -> app.Plugin {
-	return app.Plugin{build = render_plugin_build, destroy = nil}
+	return app.Plugin{build = render_plugin_build, destroy = render_plugin_destroy}
 }

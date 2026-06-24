@@ -114,7 +114,7 @@ world_init_default_params :: proc(w: ^ecs.World) {
 
 			cursor := (^int)(uintptr(ptr) + s.offsets[1])
 			if buf, ok := w.event_manager.history[ev_type]; ok {
-				total_events := len(buf.data) / buf.event_size
+				total_events := buf.count
 
 				// Handle case where events were cleared between runs
 				if cursor^ > total_events {
@@ -125,16 +125,25 @@ world_init_default_params :: proc(w: ^ecs.World) {
 
 				if count > 0 {
 					// Copy history to temp_allocator to provide a stable slice for the system
-					data_size := int(count * buf.event_size)
-					out_data := make([]u8, data_size, context.temp_allocator)
-					mem.copy(&out_data[0], &buf.data[cursor^ * buf.event_size], data_size)
+					if buf.event_size > 0 {
+						data_size := int(count * buf.event_size)
+						out_data := make([]u8, data_size, context.temp_allocator)
+						mem.copy(&out_data[0], &buf.data[cursor^ * buf.event_size], data_size)
 
-					cursor^ = total_events
-					slice := runtime.Raw_Slice {
-						data = &out_data[0],
-						len  = count,
+						slice := runtime.Raw_Slice {
+							data = &out_data[0],
+							len  = count,
+						}
+						reflect.assign_ptr_value(ptr, slice)
+					} else {
+						// For zero-sized events, just provide length
+						slice := runtime.Raw_Slice {
+							data = nil,
+							len  = count,
+						}
+						reflect.assign_ptr_value(ptr, slice)
 					}
-					reflect.assign_ptr_value(ptr, slice)
+					cursor^ = total_events
 				} else {
 					slice := runtime.Raw_Slice {
 						data = nil,
