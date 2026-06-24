@@ -1,8 +1,8 @@
 package main
 
-import "ecs"
-import log "logging"
-import logrl "logging/raylib"
+import "src/ecs"
+import log "src/logging"
+import logrl "src/logging/raylib"
 import rl "vendor:raylib"
 
 main :: proc() {

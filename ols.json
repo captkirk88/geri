@@ -10,10 +10,11 @@
     "enable_inlay_hints_implicit_return": true,
     "enable_inlay_hints_optional_result": true,
     "enable_inlay_hints_params": true,
+    "checker_args": "-vet-style",
     "collections": [
         {
             "name": "ecs",
-            "path": "ecs"
+            "path": "src/ecs"
         },
         {
             "name": "libs",
@@ -21,23 +22,23 @@
         },
         {
             "name": "logging",
-            "path": "logging"
+            "path": "src/logging"
         },
         {
             "name": "reflect",
-            "path": "reflect"
+            "path": "src/reflect"
         },
         {
             "name": "benchmark",
-            "path": "benchmark"
+            "path": "src/benchmark"
         },
         {
-            "name": "os",
-            "path": "os"
+            "name": "os_geri",
+            "path": "src/os"
         },
         {
             "name": "specs",
-            "path": "specs"
+            "path": "src/specs"
         }
     ]
 }

@@ -1,38 +1,38 @@
 [vars]
-BUILD_OUTPUT_DIR = "build/"
+BUILD_OUTPUT_DIR = "build/{{os()}}/"
 
 vet = "-vet-style"
 target = ""
-collections = "-collection:ecs=ecs -collection:logging=logging -collection:reflect=reflect -collection:benchmark=benchmark -collection:libs=vendor -collection:os=os -collection:specs=specs"
+collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs"
 build_lib_win = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
 build_lib_other = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
 build_exe_win = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
 build_exe_other = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try"
-test = "-all-packages -o:speed -define:ODIN_TEST_FANCY=false"
+test = "-all-packages -o:speed "  # -define:ODIN_TEST_FANCY=false"
 
 [tasks.test]
 quiet = true
-depends = ["build-odin", "install-odpkg"]
+depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}}",
+  "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_runner.exe",
 ]
 
 [tasks.bench]
 interactive = true
-quiet = true
+# quiet = true
 env = { BENCH_FORMAT = "{{ env.BENCH_FORMAT | default(value='markdown;graph') }}" }
-depends = ["build-odin", "install-odpkg"]
+depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin test benches {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}}",
+  "odin test src/benches {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
 ]
 
 [tasks.try]
 interactive = true
-depends = ["build-odin", "install-odpkg"]
+depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
@@ -46,24 +46,19 @@ run_windows = [
   { task = "clean" }
 ]
 
-[tasks.make_build]
-quiet = true
-depends = "clean"
-run = "mkdir -p build"
-run_windows = "powershell -Command \"New-Item -ItemType Directory -Force build | Out-Null\""
-hide = true
-
 [tasks.build]
 quiet = true
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin build ecs {{vars.vet}} {{vars.target}} {{vars.build_lib_other}} {{vars.collections}}",
+  { task = "copy_vendor_libs" },
+  "odin build src {{vars.vet}} {{vars.target}} {{vars.build_lib_other}} {{vars.collections}}",
 ]
 run_windows = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin build ecs {{vars.vet}} {{vars.target}} {{vars.build_lib_win}} {{vars.collections}}",
+  { task = "copy_vendor_libs" },
+  "odin build src {{vars.vet}} {{vars.target}} {{vars.build_lib_win}} {{vars.collections}}",
 ]
 
 [tasks.debug]
@@ -72,13 +67,22 @@ depends = ["build-odin", "install-odpkg"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin run run.odin -file {{vars.vet}} {{vars.target}} -debug {{vars.collections}} -out:build/debug.exe",
+  "odin run run.odin -file {{vars.vet}} {{vars.target}} -debug {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}debug.exe",
 ]
 
 [tasks.clean]
 interactive = true
 quiet = true
-run = ["rm -rf build", "rm -rf *.exe", "rm -rf *.pdb"]
+silent = true
+run = ["rm -rf **/*.exe", "rm -rf **/*.pdb"]
+
+[tasks.make_build]
+quiet = true
+silent = true
+depends = "clean"
+run = "mkdir -p {{vars.BUILD_OUTPUT_DIR}}"
+run_windows = "powershell -Command \"New-Item -ItemType Directory -Force '{{vars.BUILD_OUTPUT_DIR}}' | Out-Null\""
+hide = true
 
 [tasks.update_deps]
 depends = ["build-odin", "install-odpkg"]
@@ -149,3 +153,10 @@ powershell -c "
   Write-Host '=> Done! odpkg installed successfully.'
 "
 """
+
+[tasks.copy_vendor_libs]
+description = "Copy OS-specific dynamic libraries from Odin's vendor directory"
+quiet = true
+depends = "make_build"
+run = "bash scripts/copy_vendor_libs.sh {{vars.BUILD_OUTPUT_DIR}}"
+run_windows = "powershell -File scripts/copy_vendor_libs.ps1 {{vars.BUILD_OUTPUT_DIR}}"
