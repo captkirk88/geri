@@ -156,6 +156,35 @@ schedule_add_system :: proc(
 	sched.needs_compilation = true
 }
 
+// Registers a pre-built ^System into the schedule (e.g., from run_if or pipe).
+schedule_add_system_raw :: proc(
+	sched: ^Schedule,
+	w: ^ecs.World,
+	system: ^sys.System,
+	name: string = "<composite>",
+	before: []rawptr = nil,
+	after: []rawptr = nil,
+) {
+	sync.mutex_lock(&sched.mutex)
+	defer sync.mutex_unlock(&sched.mutex)
+
+	meta: System_Metadata
+	meta.system = system
+	meta.name = name
+	meta.before = make([dynamic]rawptr, w.allocator)
+	meta.after = make([dynamic]rawptr, w.allocator)
+
+	for b in before {
+		append(&meta.before, b)
+	}
+	for a in after {
+		append(&meta.after, a)
+	}
+
+	append(&sched.systems, meta)
+	sched.needs_compilation = true
+}
+
 // Reflects on the system's parameter block to find and return the types of all global resources accessed by the system.
 get_system_resources :: proc(
 	system: ^sys.System,

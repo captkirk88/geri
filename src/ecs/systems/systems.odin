@@ -26,6 +26,18 @@ System :: struct {
 	commands:        ecs.Commands,
 	resolved_params: [dynamic]System_Param_Resolve,
 	resolved:        bool,
+	// Active world during execution (set by build_system before each run)
+	world:             ^ecs.World,
+	// Captures a return value into an out-pointer; nil for void-returning systems
+	return_runner:     proc(sys: ^System, data: rawptr, out: rawptr),
+	return_size:       int,
+	return_typeid:     typeid,
+	// Piped-in value injected by a preceding pipe() composite system
+	pipe_in:           rawptr,
+	pipe_in_typeid:    typeid,
+	pipe_in_size:      int,
+	// Composite system cleanup; owns and destroys inner system allocations
+	composite_destroy: proc(data: rawptr, allocator: mem.Allocator),
 }
 
 Schedule :: struct {
@@ -180,6 +192,33 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			ecs.commands_flush(&sys_ptr.commands)
 		},
 	})
+
+	register_system_param_builder(w, {
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			return info.id == typeid_of(^ecs.World)
+		},
+		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			((^^ecs.World)(ptr))^ = w
+		},
+	})
+
+	// In(T) system param: receives a value piped in from a preceding pipe() composite.
+	// Matches any struct with exactly one field named "value".  When a pipe is active
+	// the field is filled from sys.pipe_in; otherwise it remains zero-initialised.
+	register_system_param_builder(w, {
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			s, ok := info.variant.(runtime.Type_Info_Struct)
+			if !ok || s.field_count != 1 do return false
+			return s.names[0] == "value"
+		},
+		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			sys_ptr := (^System)(sys)
+			if sys_ptr.pipe_in == nil || sys_ptr.pipe_in_size == 0 do return
+			s := info.variant.(runtime.Type_Info_Struct)
+			field_ptr := rawptr(uintptr(ptr) + s.offsets[0])
+			mem.copy(field_ptr, sys_ptr.pipe_in, sys_ptr.pipe_in_size)
+		},
+	})
 }
 
 // Generic helper to register simple system params of a specific type
@@ -322,6 +361,75 @@ new_system :: proc(
 		}
 	}
 
+	// Build a return_runner when T has exactly one return value.
+	// The runner captures that return value into an out-pointer supplied by
+	// the caller (pipe/run_if composites).  Uses the same arg-unpacking pattern
+	// as the main runner so params are injected identically.
+	when intrinsics.type_proc_return_count(T) == 1 {
+		Return_Type :: intrinsics.type_proc_return_type(T, 0)
+		s.return_typeid = typeid_of(Return_Type)
+		s.return_size = size_of(Return_Type)
+
+		s.return_runner = proc(sys: ^System, data_ptr: rawptr, out: rawptr) {
+			base_ti := reflect.base_info_of(typeid_of(T))
+			params_info, _ := reflect.get_procedure_params(base_ti)
+			fn_ptr := sys.procedure
+			param_count := len(params_info.types) // 0 for procs with no params
+			args: [8]rawptr
+			offset: uintptr = 0
+			for i in 0 ..< min(param_count, len(args)) {
+				ti := params_info.types[i]
+				offset = mem.align_forward_uintptr(offset, uintptr(ti.align))
+				args[i] = rawptr(uintptr(data_ptr) + offset)
+				offset += uintptr(ti.size)
+			}
+			val :: proc(p: rawptr, ti: ^runtime.Type_Info) -> rawptr {
+				if ti.size <= 8 do return (^rawptr)(p)^
+				return p
+			}
+			switch param_count {
+			case 0:
+				((^Return_Type)(out))^ = (cast(proc() -> Return_Type)(fn_ptr))()
+			case 1:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]))
+			case 2:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]))
+			case 3:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]))
+			case 4:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]))
+			case 5:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]))
+			case 6:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]), val(args[5], params_info.types[5]))
+			case 7:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]), val(args[5], params_info.types[5]),
+					val(args[6], params_info.types[6]))
+			case 8:
+				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]), val(args[5], params_info.types[5]),
+					val(args[6], params_info.types[6]), val(args[7], params_info.types[7]))
+			}
+		}
+	}
+
 	ti := reflect.base_info_of(T)
 	if proc_info, ok := ti.variant.(runtime.Type_Info_Procedure); ok {
 		if proc_info.params != nil {
@@ -381,6 +489,11 @@ resolve_system_params :: proc(w: ^ecs.World, system: ^System) {
 
 destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocator) {
 	if sys == nil do return
+	// Composite systems manage their own inner allocations
+	if sys.composite_destroy != nil {
+		sys.composite_destroy(sys.params_data, allocator)
+		sys.params_data = nil
+	}
 	if sys.params_data != nil {
 		if sys.resolved {
 			for p in sys.resolved_params {
@@ -423,6 +536,7 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 
 // Instantiates and maps system parameters (resource pointers, command buffers, event readers/writers) from the world.
 build_system :: proc(w: ^ecs.World, system: ^System) {
+	system.world = w  // always expose world for composite runners
 	if system.params_data == nil do return
 
 	if !system.resolved {
@@ -501,3 +615,202 @@ test_systems_params :: proc(t: ^testing.T) {
 	run_system(&w, sys)
 	testing.expect_value(t, conf.value, 17) // Value + 1 + event(5)
 }
+
+// ─── Composite system data ────────────────────────────────────────────────────
+
+@(private)
+Run_If_Data :: struct {
+	condition: ^System,
+	target:    ^System,
+}
+
+@(private)
+Pipe_Data :: struct {
+	source:     ^System,
+	target:     ^System,
+	return_buf: [128]byte, // return value from source, up to 128 bytes
+}
+
+// ─── run_if ──────────────────────────────────────────────────────────────────
+
+/*
+	Creates a composite system that runs `target` only when `condition` returns true.
+	`condition` must be a system procedure returning exactly one `bool`.
+
+	Example:
+		app_add_system(&app, app.Update, sys.run_if(is_alive, process))
+*/
+run_if :: proc(
+	condition: $C,
+	target:    $T,
+	allocator := context.allocator,
+) -> ^System where intrinsics.type_is_proc(C),
+	intrinsics.type_is_proc(T),
+	intrinsics.type_proc_return_count(C) == 1,
+	intrinsics.type_proc_return_type(C, 0) == bool {
+
+	cond_sys   := new_system(condition, allocator)
+	target_sys := new_system(target, allocator)
+
+	data := new(Run_If_Data, allocator)
+	data.condition = cond_sys
+	data.target    = target_sys
+
+	wrapper := new(System, allocator)
+	wrapper.params_data = data
+	wrapper.resolved    = true // suppress default param resolution
+	wrapper.resolved_params = make([dynamic]System_Param_Resolve, allocator)
+
+	wrapper.composite_destroy = proc(data: rawptr, allocator: mem.Allocator) {
+		d := (^Run_If_Data)(data)
+		destroy_system(d.condition.world, d.condition, allocator)
+		destroy_system(d.target.world,    d.target,    allocator)
+		free(d, allocator)
+	}
+
+	wrapper.runner = proc(sys: ^System, data_ptr: rawptr) {
+		comp := (^Run_If_Data)(data_ptr)
+		w := sys.world
+		if w == nil do return
+
+		// Execute condition and capture bool result
+		build_system(w, comp.condition)
+		cond_result := false
+		if comp.condition.return_runner != nil {
+			ret: bool
+			comp.condition.return_runner(comp.condition, comp.condition.params_data, &ret)
+			cond_result = ret
+		}
+		flush_system(w, comp.condition)
+
+		if cond_result {
+			build_system(w, comp.target)
+			execute_system(comp.target)
+			flush_system(w, comp.target)
+		}
+	}
+
+	return wrapper
+}
+
+// ─── pipe ────────────────────────────────────────────────────────────────────
+
+/*
+	Creates a composite system that runs `source`, captures its single return value,
+	then runs `target` with that value injected via params.In(T).
+
+	`source` must return exactly one value.  `target` may declare a `params.In(T)`
+	parameter whose T matches the source return type to receive the piped value.
+
+	Example:
+		app_add_system(&app, app.Update, sys.pipe(compute_count, consume_count))
+*/
+pipe :: proc(
+	source: $S,
+	target: $T,
+	allocator := context.allocator,
+) -> ^System where intrinsics.type_is_proc(S),
+	intrinsics.type_is_proc(T),
+	intrinsics.type_proc_return_count(S) == 1 {
+
+	source_sys := new_system(source, allocator)
+	target_sys := new_system(target, allocator)
+
+	data := new(Pipe_Data, allocator)
+	data.source = source_sys
+	data.target = target_sys
+
+	wrapper := new(System, allocator)
+	wrapper.params_data = data
+	wrapper.resolved    = true
+	wrapper.resolved_params = make([dynamic]System_Param_Resolve, allocator)
+
+	wrapper.composite_destroy = proc(data: rawptr, allocator: mem.Allocator) {
+		d := (^Pipe_Data)(data)
+		destroy_system(d.source.world, d.source, allocator)
+		destroy_system(d.target.world, d.target, allocator)
+		free(d, allocator)
+	}
+
+	wrapper.runner = proc(sys: ^System, data_ptr: rawptr) {
+		comp := (^Pipe_Data)(data_ptr)
+		w := sys.world
+		if w == nil do return
+
+		// Execute source and capture its return value into the embedded buffer
+		build_system(w, comp.source)
+		if comp.source.return_runner != nil {
+			mem.zero(&comp.return_buf[0], len(comp.return_buf))
+			comp.source.return_runner(comp.source, comp.source.params_data, &comp.return_buf[0])
+		} else {
+			execute_system(comp.source)
+		}
+		flush_system(w, comp.source)
+
+		// Inject return value as pipe input to target
+		comp.target.pipe_in        = &comp.return_buf[0]
+		comp.target.pipe_in_typeid = comp.source.return_typeid
+		comp.target.pipe_in_size   = comp.source.return_size
+
+		build_system(w, comp.target)
+		execute_system(comp.target)
+		flush_system(w, comp.target)
+
+		comp.target.pipe_in = nil // clear after use to avoid dangling reference
+	}
+
+	return wrapper
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+@(test)
+test_run_if :: proc(t: ^testing.T) {
+	w := ecs.new_world()
+	defer ecs.world_destroy(&w)
+	world_init_default_params(&w)
+
+	Flag :: struct { enabled: bool }
+	Counter :: struct { n: int }
+	ecs.world_add_resource(&w, Flag{true})
+	ecs.world_add_resource(&w, Counter{0})
+
+	cond_proc := proc(flag: params.Res(Flag)) -> bool {
+		return flag.ptr.enabled
+	}
+	body_proc := proc(counter: params.Res(Counter)) {
+		counter.ptr.n += 1
+	}
+
+	sys := run_if(cond_proc, body_proc)
+	defer destroy_system(&w, sys)
+
+	run_system(&w, sys)
+	testing.expect_value(t, ecs.world_get_resource(&w, Counter).n, 1)
+
+	ecs.world_get_resource(&w, Flag).enabled = false
+	run_system(&w, sys)
+	testing.expect_value(t, ecs.world_get_resource(&w, Counter).n, 1) // should NOT increment
+}
+
+@(test)
+test_pipe :: proc(t: ^testing.T) {
+	w := ecs.new_world()
+	defer ecs.world_destroy(&w)
+	world_init_default_params(&w)
+
+	Result :: struct { value: int }
+	ecs.world_add_resource(&w, Result{0})
+
+	source_proc := proc() -> int { return 42 }
+	target_proc  := proc(in_val: params.In(int), res: params.Res(Result)) {
+		res.ptr.value = in_val.value
+	}
+
+	sys := pipe(source_proc, target_proc)
+	defer destroy_system(&w, sys)
+
+	run_system(&w, sys)
+	testing.expect_value(t, ecs.world_get_resource(&w, Result).value, 42)
+}
+

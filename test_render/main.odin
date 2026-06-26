@@ -1,14 +1,28 @@
-#+feature using-stmt
-package graphics
+package main
 
-import "../app"
-import "../ecs"
-import "../ecs/params"
-import "../windowing"
+import "core:testing"
+
+import "../src/app"
+import "../src/ecs"
+import "../src/ecs/params"
+import graphics "../src/graphics"
+import "../src/windowing"
+import "core:c"
 import "core:math"
 import "core:math/rand"
-import "core:testing"
 import "vendor:sdl3"
+
+main :: proc() {
+	t := testing.T{}
+	graphics.test_render_pipeline_initialization(&t)
+}
+
+Batch2D :: graphics.Batch2D
+
+Vertex2D :: graphics.Vertex2D
+Render_Context :: graphics.Render_Context
+
+main_render_system :: graphics.main_render_system
 
 Circle :: struct {
 	radius: f32,
@@ -19,7 +33,13 @@ Position2D :: struct {
 	x, y: f32,
 }
 
-append_circle :: proc(batch: ^Batch2D, center: [2]f32, radius: f32, color: [4]f32, segments := 32) {
+append_circle :: proc(
+	batch: ^Batch2D,
+	center: [2]f32,
+	radius: f32,
+	color: [4]f32,
+	segments := 32,
+) {
 	base_idx := u16(len(batch.vertices))
 
 	// Add center vertex
@@ -28,10 +48,7 @@ append_circle :: proc(batch: ^Batch2D, center: [2]f32, radius: f32, color: [4]f3
 	// Add perimeter vertices
 	for i in 0 ..< segments {
 		angle := f32(i) * 2.0 * math.PI / f32(segments)
-		pos := [2]f32{
-			center.x + radius * math.cos(angle),
-			center.y + radius * math.sin(angle),
-		}
+		pos := [2]f32{center.x + radius * math.cos(angle), center.y + radius * math.sin(angle)}
 		append(&batch.vertices, Vertex2D{position = pos, color = color})
 	}
 
@@ -43,18 +60,23 @@ append_circle :: proc(batch: ^Batch2D, center: [2]f32, radius: f32, color: [4]f3
 	append(&batch.indices, base_idx, base_idx + u16(segments), base_idx + 1)
 }
 
-setup_system :: proc(commands: params.Commands) {
-	circle_count := 64
+setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing.Window_Context)) {
+	circle_count := 10_000
 	margin: f32 = 0.08 // keep circles fully on screen (radius)
+	win_w: c.int
+	win_h: c.int
+	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+	w := f32(win_w)
+	h := f32(win_h)
 	for i in 0 ..< circle_count {
-		fx := rand.float32_range(-1.0 + margin, 1.0 - margin)
-		fy := rand.float32_range(-1.0 + margin, 1.0 - margin)
+		fx := rand.float32_range(-w / 2, w / 2)
+		fy := rand.float32_range(-h / 2, h / 2)
 
 		// Spread hue evenly then jitter for variety
 		hue := (f32(i) / f32(circle_count) + rand.float32_range(0, 0.1)) * math.PI * 2
-		r := math.cos(hue)*0.5 + 0.5
-		g := math.cos(hue + math.PI * 2 / 3)*0.5 + 0.5
-		b := math.cos(hue + math.PI * 4 / 3)*0.5 + 0.5
+		r := math.cos(hue) * 0.5 + 0.5
+		g := math.cos(hue + math.PI * 2 / 3) * 0.5 + 0.5
+		b := math.cos(hue + math.PI * 4 / 3) * 0.5 + 0.5
 
 		ec := ecs.commands_spawn(commands.ptr)
 		ecs.entity_commands_add_components(
@@ -89,7 +111,7 @@ draw_circles_system :: proc(
 }
 
 test_render_pipeline_initialization :: proc(t: ^testing.T) {
-	application := app.app_init([]app.Plugin{windowing.Window_Plugin(), Render_Plugin()})
+	application := app.app_init([]app.Plugin{windowing.Window_Plugin(), graphics.Render_Plugin()})
 	defer {
 		window_ctx := ecs.world_get_resource(&application.world, windowing.Window_Context)
 		if window_ctx != nil && window_ctx.window != nil {

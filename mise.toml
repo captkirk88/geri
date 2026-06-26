@@ -26,7 +26,7 @@ depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin run test_render.odin -file {{vars.vet}} {{vars.target}} -o:speed {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe",
+  "odin run test_render {{vars.vet}} {{vars.target}} -o:speed {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe",
 ]
 
 [tasks.bench]

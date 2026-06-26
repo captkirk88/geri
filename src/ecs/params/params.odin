@@ -30,3 +30,10 @@ EventReader :: struct($T: typeid) {
 	events: []T,
 	_cursor: int,
 }
+
+// Receive a value piped in from a preceding pipe() composite system.
+// Zero-initialized when no pipe is active.
+In :: struct($T: typeid) {
+	value: T,
+}
+

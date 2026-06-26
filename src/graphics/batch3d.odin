@@ -149,6 +149,7 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 	if ind_size > batch.ind_buf_cap {
 		if batch.index_buf != nil do wgpu.BufferRelease(batch.index_buf)
 		batch.ind_buf_cap = max(ind_size, batch.ind_buf_cap * 2, 1024)
+		batch.ind_buf_cap = (batch.ind_buf_cap + 3) & ~int(3)
 		desc := wgpu.BufferDescriptor{
 			usage = {.Index, .CopyDst},
 			size  = u64(batch.ind_buf_cap),
@@ -158,7 +159,10 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 
 	// Upload data
 	padded_ind_size := (ind_size + 3) & ~int(3)
-	if cap(batch.indices) * size_of(u16) < padded_ind_size do reserve(&batch.indices, cap(batch.indices) + 1)
+	needed_cap := padded_ind_size / size_of(u16)
+	if cap(batch.indices) < needed_cap {
+		reserve(&batch.indices, needed_cap)
+	}
 
 	wgpu.QueueWriteBuffer(ctx.queue, batch.vertex_buf, 0, raw_data(batch.vertices), uint(vert_size))
 	wgpu.QueueWriteBuffer(ctx.queue, batch.index_buf, 0, raw_data(batch.indices), uint(padded_ind_size))

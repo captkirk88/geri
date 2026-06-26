@@ -105,6 +105,25 @@ app_add_system :: proc(
 	schedule_add_system(sched, &app.world, procedure, name, before, after)
 }
 
+// Registers a pre-built composite system (e.g., from sys.run_if or sys.pipe) into a named schedule.
+app_add_system_raw :: proc(
+	app: ^App,
+	schedule_label: Schedule_Label,
+	system: ^sys.System,
+	name: string = "<composite>",
+	before: []rawptr = nil,
+	after: []rawptr = nil,
+) {
+	sync.mutex_lock(&app.mutex)
+	if schedule_label not_in app.schedules {
+		app.schedules[schedule_label] = schedule_new(app.thread_count, app.world.allocator)
+	}
+	sched := app.schedules[schedule_label]
+	sync.mutex_unlock(&app.mutex)
+
+	schedule_add_system_raw(sched, &app.world, system, name, before, after)
+}
+
 // Returns true if the schedule label requires the main thread (e.g. rendering, event pumping).
 is_main_thread_schedule :: proc(label: Schedule_Label) -> bool {
 	if label == First do return true
