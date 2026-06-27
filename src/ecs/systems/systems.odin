@@ -5,6 +5,7 @@ import events "../events"
 import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
+import "core:fmt"
 import "ecs:params"
 
 import "core:testing"
@@ -56,8 +57,9 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// No after_run hook is required because modifications are written directly to the resource memory.
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
-			if !reflect.match_struct_field(info, "ptr", 1) do return false
-			s := info.variant.(runtime.Type_Info_Struct)
+			base := runtime.type_info_base(info)
+			if !reflect.match_struct_field(base, "ptr", 1) do return false
+			s := base.variant.(runtime.Type_Info_Struct)
 			return reflect.get_pointer_elem_type(s, 0) != typeid_of(ecs.Commands)
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
@@ -171,8 +173,9 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// Changes made via the buffer are automatically flushed into the World inside the after_run hook.
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
-			if !reflect.match_struct_field(info, "ptr", 1) do return false
-			s := info.variant.(runtime.Type_Info_Struct)
+			base := runtime.type_info_base(info)
+			if !reflect.match_struct_field(base, "ptr", 1) do return false
+			s := base.variant.(runtime.Type_Info_Struct)
 			return reflect.get_pointer_elem_type(s, 0) == typeid_of(ecs.Commands)
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
@@ -195,7 +198,8 @@ world_init_default_params :: proc(w: ^ecs.World) {
 
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
-			return info.id == typeid_of(^ecs.World)
+			base := runtime.type_info_base(info)
+			return base.id == typeid_of(^ecs.World)
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			((^^ecs.World)(ptr))^ = w
@@ -207,7 +211,8 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// the field is filled from sys.pipe_in; otherwise it remains zero-initialised.
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
-			s, ok := info.variant.(runtime.Type_Info_Struct)
+			base := runtime.type_info_base(info)
+			s, ok := base.variant.(runtime.Type_Info_Struct)
 			if !ok || s.field_count != 1 do return false
 			return s.names[0] == "value"
 		},
@@ -219,12 +224,164 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			mem.copy(field_ptr, sys_ptr.pipe_in, sys_ptr.pipe_in_size)
 		},
 	})
+
+	// OnAdded system param
+	register_system_param_builder(w, {
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			named, ok := info.variant.(runtime.Type_Info_Named)
+			if !ok do return false
+			return len(named.name) >= 8 && named.name[:8] == "OnAdded("
+		},
+		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			s := info.variant.(runtime.Type_Info_Struct)
+			phantom_ti := s.types[2]
+			ptr_info := phantom_ti.variant.(runtime.Type_Info_Pointer)
+			t := ptr_info.elem.id
+
+			term := ecs.Term {
+				op    = .OnAdd,
+				types = []typeid{t},
+			}
+			vid := ecs.world_resolve_term(w, term)
+
+			cursor := (^int)(uintptr(ptr) + s.offsets[1])
+			if buf, ok := w.event_manager.history[vid]; ok {
+				total_events := buf.count
+				if cursor^ > total_events {
+					cursor^ = 0
+				}
+				count := total_events - cursor^
+				if count > 0 {
+					out_entities := make([]ecs.Entity, count, context.temp_allocator)
+					for i in 0 ..< count {
+						out_entities[i] = transmute(ecs.Entity)buf.entities[cursor^ + i]
+					}
+					slice := runtime.Raw_Slice {
+						data = &out_entities[0],
+						len  = count,
+					}
+					reflect.assign_ptr_value(ptr, slice)
+					cursor^ = total_events
+				} else {
+					slice := runtime.Raw_Slice {
+						data = nil,
+						len  = 0,
+					}
+					reflect.assign_ptr_value(ptr, slice)
+				}
+			} else {
+				slice := runtime.Raw_Slice {
+					data = nil,
+					len  = 0,
+				}
+				reflect.assign_ptr_value(ptr, slice)
+			}
+		},
+	})
+
+	// OnRemoved system param
+	register_system_param_builder(w, {
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			named, ok := info.variant.(runtime.Type_Info_Named)
+			if !ok do return false
+			return len(named.name) >= 10 && named.name[:10] == "OnRemoved("
+		},
+		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			s := info.variant.(runtime.Type_Info_Struct)
+			phantom_ti := s.types[2]
+			ptr_info := phantom_ti.variant.(runtime.Type_Info_Pointer)
+			t := ptr_info.elem.id
+
+			term := ecs.Term {
+				op    = .OnRemove,
+				types = []typeid{t},
+			}
+			vid := ecs.world_resolve_term(w, term)
+
+			cursor := (^int)(uintptr(ptr) + s.offsets[1])
+			if buf, ok := w.event_manager.history[vid]; ok {
+				total_events := buf.count
+				if cursor^ > total_events {
+					cursor^ = 0
+				}
+				count := total_events - cursor^
+				if count > 0 {
+					out_entities := make([]ecs.Entity, count, context.temp_allocator)
+					for i in 0 ..< count {
+						out_entities[i] = transmute(ecs.Entity)buf.entities[cursor^ + i]
+					}
+					slice := runtime.Raw_Slice {
+						data = &out_entities[0],
+						len  = count,
+					}
+					reflect.assign_ptr_value(ptr, slice)
+					cursor^ = total_events
+				} else {
+					slice := runtime.Raw_Slice {
+						data = nil,
+						len  = 0,
+					}
+					reflect.assign_ptr_value(ptr, slice)
+				}
+			} else {
+				slice := runtime.Raw_Slice {
+					data = nil,
+					len  = 0,
+				}
+				reflect.assign_ptr_value(ptr, slice)
+			}
+		},
+	})
+
+	// Single system param
+	register_system_param_builder(w, {
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			named, ok := info.variant.(runtime.Type_Info_Named)
+			if !ok do return false
+			return len(named.name) >= 7 && named.name[:7] == "Single("
+		},
+		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			s := info.variant.(runtime.Type_Info_Struct)
+			phantom_ti := s.types[2]
+			ptr_info := phantom_ti.variant.(runtime.Type_Info_Pointer)
+			t := ptr_info.elem.id
+
+			found_entity: ecs.Entity
+			found_ptr: rawptr = nil
+			found_count := 0
+
+			for _, arch in w.archetypes {
+				if t in arch.lookup {
+					col_idx := arch.lookup[t]
+					col := &arch.columns[col_idx]
+					for i in 0 ..< arch.len {
+						found_entity = arch.entities[i]
+						found_ptr = rawptr(uintptr(col.ptr) + uintptr(i * col.size))
+						found_count += 1
+					}
+				}
+			}
+
+			if found_count != 1 {
+				panic(fmt.tprintf("Single(%v) matched %d entities instead of exactly 1", t, found_count))
+			}
+
+			entity_ptr := (^ecs.Entity)(uintptr(ptr) + s.offsets[0])
+			entity_ptr^ = found_entity
+
+			val_ptr := (^rawptr)(uintptr(ptr) + s.offsets[1])
+			val_ptr^ = found_ptr
+		},
+	})
 }
 
 // Generic helper to register simple system params of a specific type
 register_system_param :: proc(w: ^ecs.World, $T: typeid, provider: proc(w: ^ecs.World, sys: ^System) -> T) {
 	register_system_param_builder(w, {
-		match = proc(info: ^runtime.Type_Info) -> bool {return info.id == typeid_of(T)},
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			base := runtime.type_info_base(info)
+			return base.id == typeid_of(T)
+		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			((^T)(ptr))^ = provider(w, (^System)(sys))
 		},
@@ -472,7 +629,7 @@ resolve_system_params :: proc(w: ^ecs.World, system: ^System) {
 		base_info := runtime.type_info_base(field_info)
 
 		for builder in w.param_builders {
-			if builder.match(base_info) {
+			if builder.match(field_info) {
 				append(&system.resolved_params, System_Param_Resolve{
 					builder = builder,
 					base_info = base_info,
@@ -516,7 +673,7 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 					base_info := runtime.type_info_base(field_info)
 
 					for builder in w.param_builders {
-						if builder.match(base_info) {
+						if builder.match(field_info) {
 							if builder.destroy != nil {
 								builder.destroy(rawptr(sys), base_info, field_ptr)
 							}
@@ -813,4 +970,59 @@ test_pipe :: proc(t: ^testing.T) {
 	run_system(&w, sys)
 	testing.expect_value(t, ecs.world_get_resource(&w, Result).value, 42)
 }
+
+@(test)
+test_new_params_added_removed_single :: proc(t: ^testing.T) {
+	w := ecs.new_world()
+	defer ecs.world_destroy(&w)
+	world_init_default_params(&w)
+
+	TestComponent :: struct { x: int }
+	Config :: struct {
+		added_count: int,
+		removed_count: int,
+		single_val: int,
+	}
+	ecs.world_add_resource(&w, Config{})
+
+	sys_proc := proc(
+		added: params.OnAdded(TestComponent),
+		removed: params.OnRemoved(TestComponent),
+		single_comp: params.Single(TestComponent),
+		config: params.Res(Config),
+	) {
+		config.ptr.added_count = len(added.entities)
+		config.ptr.removed_count = len(removed.entities)
+		config.ptr.single_val = single_comp.value.x
+	}
+
+	sys := new_system(sys_proc)
+	defer destroy_system(&w, sys)
+
+	// 1. Spawn a single entity with TestComponent
+	e1 := ecs.world_spawn(&w)
+	ecs.world_add_component(&w, e1, TestComponent{x = 42})
+
+	// Run system
+	run_system(&w, sys)
+
+	conf := ecs.world_get_resource(&w, Config)
+	testing.expect_value(t, conf.added_count, 1)
+	testing.expect_value(t, conf.removed_count, 0)
+	testing.expect_value(t, conf.single_val, 42)
+
+	// 2. Remove the component from e1
+	ecs.world_remove_component(&w, e1, TestComponent)
+
+	// Spawn a new single entity with TestComponent so Single(TestComponent) doesn't panic
+	e2 := ecs.world_spawn(&w)
+	ecs.world_add_component(&w, e2, TestComponent{x = 100})
+
+	run_system(&w, sys)
+
+	testing.expect_value(t, conf.added_count, 1)   // e2 was added
+	testing.expect_value(t, conf.removed_count, 1) // e1 was removed
+	testing.expect_value(t, conf.single_val, 100)
+}
+
 

@@ -53,7 +53,6 @@ hash_filter_info :: proc(op: Filter_Op, types: []typeid, target: Entity, relatio
 	return h
 }
 
-@(private)
 world_resolve_term :: proc(w: ^World, term: Term) -> typeid {
 	sync.mutex_lock(&w.cache_mutex)
 	defer sync.mutex_unlock(&w.cache_mutex)

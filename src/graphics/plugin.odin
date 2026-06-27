@@ -6,6 +6,7 @@ import "../ecs/params"
 import log "../logging"
 import "../windowing"
 import "core:fmt"
+import camera "../camera"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
 
@@ -98,7 +99,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	config := wgpu.SurfaceConfiguration {
 		device      = req_data.device,
 		format      = .BGRA8Unorm, // Default fallback
-		usage       = {.RenderAttachment},
+		usage       = {.RenderAttachment, .CopySrc},
 		width       = u32(win_desc.width),
 		height      = u32(win_desc.height),
 		presentMode = .Fifo,
@@ -132,6 +133,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	batch3d := init_batch3d(req_data.device, config.format)
 	app.app_add_resource(a, batch3d)
 
+	app.app_add_system(a, app.PreUpdate, camera.auto_transform_system)
 	app.app_add_system(a, app.PreRender, frame_start_system)
 	app.app_add_system(a, app.Render, main_render_system)
 	app.app_add_system(a, app.PostRender, frame_present_system)

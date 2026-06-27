@@ -61,6 +61,8 @@ A lenient formatter that processes BBCode formatting but, if validation fails, g
 
 *Predefined Colors*: `black`, `red`, `green`, `yellow`, `blue`, `magenta` (or `purple`), `cyan`, `white`, `gray` (or `grey`, `dark_gray`), and bright variants (e.g., `bright_red`, `bright_blue`).
 
+> **Note:** `[color=...]`/`[/color]` are **not** valid tags in the logging BBCode parser — they are only supported in the graphics text renderer (see [Graphics Text BBCode](#graphics-text-bbcode) below).
+
 ### Context Variables
 When formatting templates during log emitting, the following tags retrieve current context fields:
 - `[time]`: Current log timestamp.
@@ -95,6 +97,88 @@ Converts all text characters inside `<content>` to uppercase, safely preserving 
 ### `[lower <content>]`
 Converts all text characters inside `<content>` to lowercase, safely preserving ANSI escape sequences.
 - Example: `[lower HELLO]` evaluates to `hello`.
+
+---
+
+## Graphics Text BBCode
+
+The `draw_text_bbcode_ttf` procedure in `src/graphics/text.odin` uses a **separate BBCode dialect** from the logging system. It renders styled text into the 2D batch using a TTF font and supports a superset of tags designed for real-time HUD/UI rendering. These tags produce GPU vertex colors — they do **not** emit ANSI escape sequences.
+
+### Foreground Color
+| Tag | Description |
+| :--- | :--- |
+| `[color=<name>]...[/color]` or `[c=<name>]...[/c]` | Named color (same predefined names as the logging system). |
+| `[color=#RRGGBB]...[/color]` or `[c=#RRGGBB]...[/c]` | 24-bit hex foreground color. |
+
+*Predefined color names*: `red`, `green`, `blue`, `yellow`, `orange`, `magenta`/`purple`, `cyan`, `white`, `black`, `gray`/`grey`.
+
+### Foreground Opacity
+| Tag | Description |
+| :--- | :--- |
+| `[opacity=<value>]...[/opacity]` | Sets the alpha of the text. Accepts a float `0.0`–`1.0` (e.g. `0.5`) or an integer `0`–`255`. Fully opaque at `1.0` / `255`. |
+
+Opacity tags are **stackable**: the innermost value takes precedence. When `[/opacity]` is closed the previous opacity is restored.
+
+```bbcode
+Normal text [opacity=0.5]Half transparent[/opacity] back to normal.
+[opacity=0.3]Dim [opacity=0.9]Almost opaque[/opacity] dim again[/opacity]
+```
+
+### Background Color
+| Tag | Description |
+| :--- | :--- |
+| `[bg=<name>]...[/bg]` | Solid named-color background block drawn behind each glyph. |
+| `[bg_color=<name>]...[/bg_color]` | Alias for `[bg=...]`. |
+| `[bg=#RRGGBB]...[/bg]` | 24-bit hex background color. |
+
+Background blocks are rendered as solid quads from the font's `descent` baseline to the `ascent` line for each character's advance width.
+
+### Background Opacity
+| Tag | Description |
+| :--- | :--- |
+| `[bg_opacity=<value>]...[/bg_opacity]` | Sets the alpha of the background block. Accepts a float `0.0`–`1.0` or an integer `0`–`255`. |
+
+Background opacity is independent of foreground opacity and is also stackable.
+
+```bbcode
+[bg=blue]Solid Blue[/bg]
+[bg=green][bg_opacity=0.4]Transparent Green Background[/bg_opacity][/bg]
+[color=yellow][bg=red][bg_opacity=0.5]Yellow text on semi-transparent red[/bg_opacity][/bg][/color]
+```
+
+### Nesting Rules
+- All graphics text tags can be freely nested.
+- Each tag pushes its value onto a stack; the closing tag pops it, restoring the previous value.
+- Tags from the **logging BBCode dialect** (e.g. `[b]`, `[i]`, `[c=...]`, `[if ...]`) are **not** recognised by the graphics text renderer and will be rendered as literal text.
+
+### Predefined Color Names (Graphics Text)
+| Name | RGB |
+| :--- | :--- |
+| `red` | `(1, 0, 0)` |
+| `green` | `(0, 1, 0)` |
+| `blue` | `(0, 0, 1)` |
+| `yellow` | `(1, 1, 0)` |
+| `orange` | `(1, 0.5, 0)` |
+| `magenta` / `purple` | `(1, 0, 1)` |
+| `cyan` | `(0, 1, 1)` |
+| `white` | `(1, 1, 1)` |
+| `black` | `(0, 0, 0)` |
+| `gray` / `grey` | `(0.5, 0.5, 0.5)` |
+
+---
+
+## Logging vs. Graphics BBCode — Quick Reference
+
+| Feature | Logging (`bbcode` package) | Graphics (`draw_text_bbcode_ttf`) |
+| :--- | :--- | :--- |
+| Output | ANSI terminal escape sequences | GPU vertex colors (Batch2D quads) |
+| Foreground color tag | `[c=red]...[/c]` | `[color=red]...[/color]` |
+| Background color tag | `[bg=red]...[/bg]` | `[bg=red]...[/bg]` |
+| Opacity | ❌ Not supported | `[opacity=0.5]...[/opacity]` |
+| Background opacity | ❌ Not supported | `[bg_opacity=0.5]...[/bg_opacity]` |
+| Bold / italic / underline | ✅ `[b]`, `[i]`, `[u]`, `[s]` | ❌ Not supported |
+| Conditional / tag functions | ✅ `[if]`, `[len]`, `[hour]` etc. | ❌ Not supported |
+| Context variables | ✅ `[time]`, `[message]` etc. | ❌ Not supported |
 
 ---
 

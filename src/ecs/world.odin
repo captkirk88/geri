@@ -4,8 +4,8 @@ import "base:runtime"
 import "core:hash"
 import "core:mem"
 import "core:slice"
-import "core:testing"
 import "core:sync"
+import "core:testing"
 import "events"
 
 
@@ -326,11 +326,7 @@ _world_transition_type :: proc(
 		if t == tid {
 			if !is_tag && data != nil && size > 0 {
 				col := &current.columns[i]
-				mem.copy(
-					&(([^]byte)(col.ptr))[meta.record.row * col.size],
-					data,
-					col.size,
-				)
+				mem.copy(&(([^]byte)(col.ptr))[meta.record.row * col.size], data, col.size)
 			}
 			return
 		}
@@ -371,11 +367,7 @@ _world_transition_type :: proc(
 		// Moving from root: copy the new component if any
 		if !is_tag && data != nil && size > 0 {
 			next_col := &next.columns[edge.add_index]
-			mem.copy(
-				&(([^]byte)(next_col.ptr))[new_row * next_col.size],
-				data,
-				next_col.size,
-			)
+			mem.copy(&(([^]byte)(next_col.ptr))[new_row * next_col.size], data, next_col.size)
 		}
 	}
 
@@ -628,13 +620,12 @@ world_remove_component :: proc(w: ^World, entity: Entity, tid: typeid) {
 }
 
 /*
-    Internal helper to check if an entity has a specific type ID.
+    Helper to check if an entity has a specific type ID.
 */
-@(private)
 world_has_component :: proc(w: ^World, entity: Entity, tid: typeid) -> bool #no_bounds_check {
 	id := u32(entity.id)
 	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return false
-	
+
 	for col in w.entities[id].record.arch.columns {
 		if col.type == tid do return true
 	}
@@ -662,7 +653,11 @@ world_get_component :: proc(w: ^World, entity: Entity, $T: typeid) -> ^T #no_bou
 	return nil
 }
 
-world_get_component_by_id :: proc(w: ^World, entity: Entity, tid: typeid) -> rawptr #no_bounds_check {
+world_get_component_by_id :: proc(
+	w: ^World,
+	entity: Entity,
+	tid: typeid,
+) -> rawptr #no_bounds_check {
 	id := u32(entity.id)
 	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return nil
 
@@ -777,21 +772,37 @@ _query_auto_cleanup :: proc(w: ^World, terms: ..any) {
 }
 
 @(private)
-_query_cleanup_1 :: proc(w: ^World, t1: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_1 :: proc(w: ^World, t1: typeid, terms: ..any) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_2 :: proc(w: ^World, t1, t2: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_2 :: proc(w: ^World, t1, t2: typeid, terms: ..any) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_3 :: proc(w: ^World, t1, t2, t3: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_3 :: proc(w: ^World, t1, t2, t3: typeid, terms: ..any) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_4 :: proc(w: ^World, t1, t2, t3, t4: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_4 :: proc(w: ^World, t1, t2, t3, t4: typeid, terms: ..any) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_5 :: proc(w: ^World, t1, t2, t3, t4, t5: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_5 :: proc(
+	w: ^World,
+	t1, t2, t3, t4, t5: typeid,
+	terms: ..any,
+) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_6 :: proc(w: ^World, t1, t2, t3, t4, t5, t6: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_6 :: proc(
+	w: ^World,
+	t1, t2, t3, t4, t5, t6: typeid,
+	terms: ..any,
+) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_7 :: proc(w: ^World, t1, t2, t3, t4, t5, t6, t7: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_7 :: proc(
+	w: ^World,
+	t1, t2, t3, t4, t5, t6, t7: typeid,
+	terms: ..any,
+) {w.iteration_depth -= 1}
 @(private)
-_query_cleanup_8 :: proc(w: ^World, t1, t2, t3, t4, t5, t6, t7, t8: typeid, terms: ..any) { w.iteration_depth -= 1 }
+_query_cleanup_8 :: proc(
+	w: ^World,
+	t1, t2, t3, t4, t5, t6, t7, t8: typeid,
+	terms: ..any,
+) {w.iteration_depth -= 1}
 
 QueryIter :: distinct []^Archetype
 
@@ -799,7 +810,7 @@ QueryIter :: distinct []^Archetype
     Executes a query against the world, returning a slice of matching archetypes.
     Uses @(deferred_in) to track iteration depth and prevent concurrent structural changes.
 */
-query :: proc{
+query :: proc {
 	query_any,
 	query_type_1,
 	query_type_2,
@@ -811,13 +822,13 @@ query :: proc{
 	query_type_8,
 }
 
-@(deferred_in=_query_auto_cleanup)
+@(deferred_in = _query_auto_cleanup)
 query_any :: proc(w: ^World, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	return _query_internal(w, terms)
 }
 
-@(deferred_in=_query_cleanup_1)
+@(deferred_in = _query_cleanup_1)
 query_type_1 :: proc(w: ^World, t1: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 1, context.temp_allocator)
@@ -827,7 +838,7 @@ query_type_1 :: proc(w: ^World, t1: typeid, terms: ..any) -> QueryIter {
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_2)
+@(deferred_in = _query_cleanup_2)
 query_type_2 :: proc(w: ^World, t1, t2: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 2, context.temp_allocator)
@@ -838,7 +849,7 @@ query_type_2 :: proc(w: ^World, t1, t2: typeid, terms: ..any) -> QueryIter {
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_3)
+@(deferred_in = _query_cleanup_3)
 query_type_3 :: proc(w: ^World, t1, t2, t3: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 3, context.temp_allocator)
@@ -850,7 +861,7 @@ query_type_3 :: proc(w: ^World, t1, t2, t3: typeid, terms: ..any) -> QueryIter {
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_4)
+@(deferred_in = _query_cleanup_4)
 query_type_4 :: proc(w: ^World, t1, t2, t3, t4: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 4, context.temp_allocator)
@@ -863,7 +874,7 @@ query_type_4 :: proc(w: ^World, t1, t2, t3, t4: typeid, terms: ..any) -> QueryIt
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_5)
+@(deferred_in = _query_cleanup_5)
 query_type_5 :: proc(w: ^World, t1, t2, t3, t4, t5: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 5, context.temp_allocator)
@@ -877,7 +888,7 @@ query_type_5 :: proc(w: ^World, t1, t2, t3, t4, t5: typeid, terms: ..any) -> Que
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_6)
+@(deferred_in = _query_cleanup_6)
 query_type_6 :: proc(w: ^World, t1, t2, t3, t4, t5, t6: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 6, context.temp_allocator)
@@ -892,7 +903,7 @@ query_type_6 :: proc(w: ^World, t1, t2, t3, t4, t5, t6: typeid, terms: ..any) ->
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_7)
+@(deferred_in = _query_cleanup_7)
 query_type_7 :: proc(w: ^World, t1, t2, t3, t4, t5, t6, t7: typeid, terms: ..any) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 7, context.temp_allocator)
@@ -908,8 +919,12 @@ query_type_7 :: proc(w: ^World, t1, t2, t3, t4, t5, t6, t7: typeid, terms: ..any
 	return _query_internal(w, all_terms)
 }
 
-@(deferred_in=_query_cleanup_8)
-query_type_8 :: proc(w: ^World, t1, t2, t3, t4, t5, t6, t7, t8: typeid, terms: ..any) -> QueryIter {
+@(deferred_in = _query_cleanup_8)
+query_type_8 :: proc(
+	w: ^World,
+	t1, t2, t3, t4, t5, t6, t7, t8: typeid,
+	terms: ..any,
+) -> QueryIter {
 	w.iteration_depth += 1
 	all_terms := make([]any, len(terms) + 8, context.temp_allocator)
 	defer delete(all_terms, context.temp_allocator)
@@ -1120,4 +1135,3 @@ test_world_relations :: proc(t: ^testing.T) {
 
 	world_add_relation(&w, e1, ChildOf, e2)
 }
-

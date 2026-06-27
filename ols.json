@@ -39,6 +39,22 @@
         {
             "name": "specs",
             "path": "src/specs"
+        },
+        {
+            "name": "transform",
+            "path": "src/transform"
+        },
+        {
+            "name": "camera",
+            "path": "src/camera"
+        },
+        {
+            "name": "fps",
+            "path": "src/fps"
+        },
+        {
+            "name": "graphics",
+            "path": "src/graphics"
         }
     ]
 }

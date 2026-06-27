@@ -19,6 +19,7 @@ Observer_Entry :: struct {
 @(private)
 Event_Buffer :: struct {
 	data:       [dynamic]byte,
+	entities:   [dynamic]u64,
 	event_size: int,
 	count:      int,
 }
@@ -45,6 +46,7 @@ destroy :: proc(m: ^Event_Manager) {
 	delete(m.registry)
 	for _, buf in m.history {
 		delete(buf.data)
+		delete(buf.entities)
 	}
 	delete(m.history)
 }
@@ -95,6 +97,7 @@ trigger :: proc(
 	if tid not_in m.history {
 		m.history[tid] = {
 			data       = make([dynamic]byte, m.allocator),
+			entities   = make([dynamic]u64, m.allocator),
 			event_size = reflect.size_of_type(tid),
 		}
 	}
@@ -107,6 +110,7 @@ trigger :: proc(
 			for _ in 0 ..< buf.event_size do append(&buf.data, 0)
 		}
 	}
+	append(&buf.entities, entity)
 	buf.count += 1
 	sync.rw_mutex_unlock(&m.lock)
 
@@ -132,6 +136,7 @@ clear_events :: proc(m: ^Event_Manager) {
 	defer sync.rw_mutex_unlock(&m.lock)
 	for _, &buf in m.history {
 		clear(&buf.data)
+		clear(&buf.entities)
 		buf.count = 0
 	}
 }

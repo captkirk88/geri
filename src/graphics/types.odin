@@ -14,6 +14,19 @@ Render_Context :: struct {
 Frame_Context :: struct {
 	texture_view: wgpu.TextureView,
 	encoder:      wgpu.CommandEncoder,
+	texture:      wgpu.Texture,
+}
+
+Screenshot_Format :: enum {
+	TGA,
+	BMP,
+	QOI,
+	PNG,
+}
+
+Screenshot_Request :: struct {
+	path:   string,
+	format: Screenshot_Format,
 }
 
 Vertex2D :: struct {
@@ -28,7 +41,7 @@ Vertex3D :: struct {
 
 Batch2D :: struct {
 	vertices:     [dynamic]Vertex2D,
-	indices:      [dynamic]u16,
+	indices:      [dynamic]u32,
 	vertex_buf:   wgpu.Buffer,
 	index_buf:    wgpu.Buffer,
 	pipeline:     wgpu.RenderPipeline,
@@ -38,7 +51,7 @@ Batch2D :: struct {
 
 Batch3D :: struct {
 	vertices:     [dynamic]Vertex3D,
-	indices:      [dynamic]u16,
+	indices:      [dynamic]u32,
 	vertex_buf:   wgpu.Buffer,
 	index_buf:    wgpu.Buffer,
 	pipeline:     wgpu.RenderPipeline,

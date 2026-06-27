@@ -37,3 +37,21 @@ In :: struct($T: typeid) {
 	value: T,
 }
 
+OnAdded :: struct($T: typeid) {
+	entities: []ecs.Entity,
+	_cursor:  int,
+	_phantom: ^T,
+}
+
+OnRemoved :: struct($T: typeid) {
+	entities: []ecs.Entity,
+	_cursor:  int,
+	_phantom: ^T,
+}
+
+Single :: struct($T: typeid) {
+	entity:   ecs.Entity,
+	value:    ^T,
+	_phantom: ^T,
+}
+

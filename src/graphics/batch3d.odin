@@ -33,7 +33,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 init_batch3d :: proc(device: wgpu.Device, format: wgpu.TextureFormat) -> Batch3D {
 	batch := Batch3D{}
 	batch.vertices = make([dynamic]Vertex3D)
-	batch.indices = make([dynamic]u16)
+	batch.indices = make([dynamic]u32)
 
 	// Shader
 	shader_source := wgpu.ShaderSourceWGSL {
@@ -132,7 +132,7 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 	if len(batch.indices) == 0 do return
 
 	vert_size := len(batch.vertices) * size_of(Vertex3D)
-	ind_size := len(batch.indices) * size_of(u16)
+	ind_size := len(batch.indices) * size_of(u32)
 
 	// Reallocate vertex buffer if needed
 	if vert_size > batch.vert_buf_cap {
@@ -159,7 +159,7 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 
 	// Upload data
 	padded_ind_size := (ind_size + 3) & ~int(3)
-	needed_cap := padded_ind_size / size_of(u16)
+	needed_cap := padded_ind_size / size_of(u32)
 	if cap(batch.indices) < needed_cap {
 		reserve(&batch.indices, needed_cap)
 	}
@@ -170,7 +170,7 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 	// Draw
 	wgpu.RenderPassEncoderSetPipeline(pass, batch.pipeline)
 	wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, batch.vertex_buf, 0, u64(vert_size))
-	wgpu.RenderPassEncoderSetIndexBuffer(pass, batch.index_buf, .Uint16, 0, u64(ind_size))
+	wgpu.RenderPassEncoderSetIndexBuffer(pass, batch.index_buf, .Uint32, 0, u64(ind_size))
 	wgpu.RenderPassEncoderDrawIndexed(pass, u32(len(batch.indices)), 1, 0, 0, 0)
 
 	// Clear

@@ -8,13 +8,14 @@ match_struct_field :: proc(
 	field_name: string,
 	field_count: int = -1,
 ) -> bool {
-	s, ok := info.variant.(runtime.Type_Info_Struct)
-	if !ok {return false}
+	base := runtime.type_info_base(info)
+	s, ok := base.variant.(runtime.Type_Info_Struct)
+	if !ok do return false
 
-	if field_count != -1 && int(s.field_count) != field_count {return false}
+	if field_count != -1 && int(s.field_count) != field_count do return false
 
 	for i in 0 ..< s.field_count {
-		if s.names[i] == field_name {return true}
+		if s.names[i] == field_name do return true
 	}
 	return false
 }
@@ -25,19 +26,13 @@ assign_ptr_value :: proc(ptr: rawptr, value: $T) {
 }
 
 // Generic helper for build procs: gets the element type of a pointer field within a struct.
-get_pointer_elem_type :: proc(
-	struct_info: runtime.Type_Info_Struct,
-	field_index: int,
-) -> typeid {
+get_pointer_elem_type :: proc(struct_info: runtime.Type_Info_Struct, field_index: int) -> typeid {
 	ptr_info := struct_info.types[field_index].variant.(runtime.Type_Info_Pointer)
 	return ptr_info.elem.id
 }
 
 // Generic helper for build procs: gets the element type of a slice field within a struct.
-get_slice_elem_type :: proc(
-	struct_info: runtime.Type_Info_Struct,
-	field_index: int,
-) -> typeid {
+get_slice_elem_type :: proc(struct_info: runtime.Type_Info_Struct, field_index: int) -> typeid {
 	slice_info := struct_info.types[field_index].variant.(runtime.Type_Info_Slice)
 	return slice_info.elem.id
 }

@@ -3,7 +3,7 @@ BUILD_OUTPUT_DIR = "build/{{os()}}/"
 
 vet = "-vet-style"
 target = ""
-collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs"
+collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs -collection:transform=src/transform -collection:camera=src/camera -collection:fps=src/fps"
 build_lib_win = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
 build_lib_other = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
 build_exe_win = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
@@ -38,22 +38,6 @@ run = [
   { task = "make_build" },
   { task = "update_deps" },
   "odin test src/benches {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
-]
-
-[tasks.try]
-interactive = true
-depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
-run = [
-  { task = "make_build" },
-  { task = "update_deps" },
-  "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build_exe_other}} {{vars.collections}}",
-  { task = "clean" }
-]
-run_windows = [
-  { task = "make_build" },
-  { task = "update_deps" },
-  "odin run run.odin -file {{vars.vet}} {{vars.target}} {{vars.build_exe_win}} {{vars.collections}}",
-  { task = "clean" }
 ]
 
 [tasks.build]
