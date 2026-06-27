@@ -9,19 +9,21 @@ Command_Op :: enum {
 	AddComponent,
 	RemoveComponent,
 	AddSystem,
+	AddResource,
 }
 
 Command :: struct {
-	op: Command_Op,
-	entity: Entity,
-	tid: typeid,
-	data: rawptr,
-	size: int,
-	adder: proc(w: ^World, e: Entity, tid: typeid, data: rawptr),
+	op:         Command_Op,
+	entity:     Entity,
+	tid:        typeid,
+	data:       rawptr,
+	size:       int,
+	adder:      proc(w: ^World, e: Entity, tid: typeid, data: rawptr),
+	destructor: proc(data: rawptr, allocator: mem.Allocator),
 }
 
 Commands :: struct {
-	world: ^World,
+	world:  ^World,
 	buffer: [dynamic]Command,
 }
 
@@ -32,6 +34,9 @@ commands_init :: proc(w: ^World, allocator := context.allocator) -> Commands {
 commands_destroy :: proc(c: ^Commands) {
 	for cmd in c.buffer {
 		if cmd.data != nil {
+			if cmd.destructor != nil {
+				cmd.destructor(cmd.data, c.world.allocator)
+			}
 			free(cmd.data, c.world.allocator)
 		}
 	}
@@ -56,10 +61,7 @@ commands_spawn :: proc(c: ^Commands) -> EntityCommands {
 		gen = u64(gen),
 	}
 
-	append(&c.buffer, Command{
-		op = .Spawn,
-		entity = e,
-	})
+	append(&c.buffer, Command{op = .Spawn, entity = e})
 
 	return EntityCommands{commands = c, entity = e}
 }
@@ -68,19 +70,22 @@ commands_add_component :: proc(c: ^Commands, entity: Entity, component: $T) {
 	data, _ := mem.alloc(size_of(T), mem.DEFAULT_ALIGNMENT, c.world.allocator)
 	val_ptr := (^T)(data)
 	val_ptr^ = component
-	
+
 	adder := proc(w: ^World, e: Entity, tid: typeid, data: rawptr) {
 		_world_transition_type(w, e, tid, data, size_of(T), false)
 	}
 
-	append(&c.buffer, Command{
-		op = .AddComponent,
-		entity = entity,
-		tid = typeid_of(T),
-		data = data,
-		size = size_of(T),
-		adder = adder,
-	})
+	append(
+		&c.buffer,
+		Command {
+			op = .AddComponent,
+			entity = entity,
+			tid = typeid_of(T),
+			data = data,
+			size = size_of(T),
+			adder = adder,
+		},
+	)
 }
 
 commands_add_components :: proc(c: ^Commands, entity: Entity, components: ..any) {
@@ -96,14 +101,17 @@ commands_add_components :: proc(c: ^Commands, entity: Entity, components: ..any)
 			_world_transition_type(w, e, tid, data, ti.size, false)
 		}
 
-		append(&c.buffer, Command{
-			op = .AddComponent,
-			entity = entity,
-			tid = comp.id,
-			data = data,
-			size = ti.size,
-			adder = adder,
-		})
+		append(
+			&c.buffer,
+			Command {
+				op = .AddComponent,
+				entity = entity,
+				tid = comp.id,
+				data = data,
+				size = ti.size,
+				adder = adder,
+			},
+		)
 	}
 }
 
@@ -112,12 +120,10 @@ commands_remove_component :: proc(c: ^Commands, entity: Entity, $T: typeid) {
 		world_remove_component(w, e, tid)
 	}
 
-	append(&c.buffer, Command{
-		op = .RemoveComponent,
-		entity = entity,
-		tid = typeid_of(T),
-		adder = adder,
-	})
+	append(
+		&c.buffer,
+		Command{op = .RemoveComponent, entity = entity, tid = typeid_of(T), adder = adder},
+	)
 }
 
 commands_add_relation :: proc(c: ^Commands, entity: Entity, $Rel: typeid, target: Entity) {
@@ -143,50 +149,98 @@ commands_add_relation :: proc(c: ^Commands, entity: Entity, $Rel: typeid, target
 	val_ptr := (^Entity)(target_data)
 	val_ptr^ = target
 
-	append(&c.buffer, Command{
-		op = .AddComponent,
-		entity = entity,
-		tid = tid,
-		data = target_data,
-		size = size_of(Entity),
-		adder = adder,
-	})
+	append(
+		&c.buffer,
+		Command {
+			op = .AddComponent,
+			entity = entity,
+			tid = tid,
+			data = target_data,
+			size = size_of(Entity),
+			adder = adder,
+		},
+	)
 }
 
-commands_add_system :: proc(c: ^Commands, sys: rawptr, sys_size: int, adder: proc(w: ^World, e: Entity, tid: typeid, data: rawptr)) {
+commands_add_system :: proc(
+	c: ^Commands,
+	sys: rawptr,
+	sys_size: int,
+	adder: proc(w: ^World, e: Entity, tid: typeid, data: rawptr),
+) {
 	data, err := mem.alloc(sys_size, mem.DEFAULT_ALIGNMENT, c.world.allocator)
 	if err == nil {
 		mem.copy(data, sys, sys_size)
-		append(&c.buffer, Command{
-			op = .AddSystem,
-			data = data,
-			size = sys_size,
-			adder = adder,
-		})
+		append(&c.buffer, Command{op = .AddSystem, data = data, size = sys_size, adder = adder})
 	}
 }
 
+commands_add_resource_no_destroy :: proc(c: ^Commands, resource: $T) {
+	commands_add_resource_with_destroy(c, resource, nil)
+}
+
+commands_add_resource_with_destroy :: proc(
+	c: ^Commands,
+	resource: $T,
+	destroy: proc(_: ^T, _: mem.Allocator),
+) {
+	Payload :: struct {
+		value:   T,
+		destroy: proc(_: ^T, _: mem.Allocator),
+	}
+
+	data, _ := mem.alloc(size_of(Payload), mem.DEFAULT_ALIGNMENT, c.world.allocator)
+	payload := (^Payload)(data)
+	payload.value = resource
+	payload.destroy = destroy
+
+	adder := proc(w: ^World, e: Entity, tid: typeid, data: rawptr) {
+		payload := (^Payload)(data)
+		world_add_resource(w, payload.value, payload.destroy)
+	}
+
+	destructor := proc(data: rawptr, allocator: mem.Allocator) {
+		payload := (^Payload)(data)
+		if payload.destroy != nil {
+			payload.destroy(&payload.value, allocator)
+		}
+	}
+
+	append(
+		&c.buffer,
+		Command {
+			op = .AddResource,
+			tid = typeid_of(T),
+			data = data,
+			size = size_of(Payload),
+			adder = adder,
+			destructor = destructor,
+		},
+	)
+}
+
+commands_add_resource :: proc {
+	commands_add_resource_no_destroy,
+	commands_add_resource_with_destroy,
+}
+
 commands_despawn :: proc(c: ^Commands, entity: Entity) {
-	append(&c.buffer, Command{
-		op = .Despawn,
-		entity = entity,
-	})
+	append(&c.buffer, Command{op = .Despawn, entity = entity})
 }
 
 commands_flush :: proc(c: ^Commands) {
 	if c == nil do return
 	for cmd in c.buffer {
 		switch cmd.op {
-		case .AddComponent, .AddSystem:
+		case .AddComponent, .AddSystem, .AddResource, .RemoveComponent:
 			cmd.adder(c.world, cmd.entity, cmd.tid, cmd.data)
 		case .Despawn:
 			world_despawn(c.world, cmd.entity)
 		case .Spawn:
 			row := arch_add_entity(c.world.root, cmd.entity)
 			c.world.entities[cmd.entity.id].record = {c.world.root, row}
-		case .RemoveComponent:
-			cmd.adder(c.world, cmd.entity, cmd.tid, cmd.data)
 		}
+
 		if cmd.data != nil {
 			free(cmd.data, c.world.allocator)
 		}
@@ -214,7 +268,11 @@ entity_commands_remove_component :: proc(ec: EntityCommands, $T: typeid) -> Enti
 	return ec
 }
 
-entity_commands_add_relation :: proc(ec: EntityCommands, $Rel: typeid, target: Entity) -> EntityCommands {
+entity_commands_add_relation :: proc(
+	ec: EntityCommands,
+	$Rel: typeid,
+	target: Entity,
+) -> EntityCommands {
 	commands_add_relation(ec.commands, ec.entity, Rel, target)
 	return ec
 }

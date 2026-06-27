@@ -1,12 +1,12 @@
 package graphics
 
 import "../app"
+import camera "../camera"
 import "../ecs"
 import "../ecs/params"
 import log "../logging"
 import "../windowing"
 import "core:fmt"
-import camera "../camera"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
 
@@ -49,7 +49,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	}
 
 	instance_extras := wgpu.InstanceExtras {
-		chain    = wgpu.ChainedStruct{sType = .InstanceExtras},
+		chain = wgpu.ChainedStruct{sType = .InstanceExtras},
 		backends = {.DX12}, // Use DX12 to avoid Vulkan SEH exceptions in odin test runner
 	}
 	instance_desc := wgpu.InstanceDescriptor {
@@ -148,6 +148,7 @@ render_cleanup_system :: proc(
 	render_ctx: params.Res(Render_Context),
 ) {
 	if len(exit_events.events) > 0 {
+		custom_fonts_destroy()
 		if batch2d.ptr != nil do destroy_batch2d(batch2d.ptr)
 		if batch3d.ptr != nil do destroy_batch3d(batch3d.ptr)
 
@@ -163,10 +164,6 @@ render_cleanup_system :: proc(
 	}
 }
 
-render_plugin_destroy :: proc(plugin: app.Plugin, a: ^app.App) {
-	// Cleanup is now handled by render_cleanup_system on App_Exit_Event
-}
-
 Render_Plugin :: proc() -> app.Plugin {
-	return app.Plugin{build = render_plugin_build, destroy = render_plugin_destroy}
+	return app.Plugin{build = render_plugin_build, destroy = nil}
 }

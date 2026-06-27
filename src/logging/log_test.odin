@@ -966,3 +966,55 @@ test_user_template_conditional :: proc(t: ^testing.T) {
 		"Did not expect debug message to be formatted in gray",
 	)
 }
+
+@(test)
+test_bbcode_parse_spans :: proc(t: ^testing.T) {
+	spans, err, ok := bbcode.parse_spans(
+		"normal [b]bold[/b] [i]italic[/i] [u]underline[/u] [s]strikethrough[/s] [color=red]red[/color] [bg=blue][opacity=0.5][bg_opacity=0.8]transparent bg[/bg_opacity][/opacity][/bg] [font_size=24][font=\"custom.ttf\"]styled[/font][/font_size] [color=orange]orange[/color]",
+		context.allocator,
+	)
+	defer {
+		for s in spans {
+			delete(s.text)
+		}
+		delete(spans)
+	}
+
+	testing.expect(t, ok, "Expected parse_spans to succeed")
+	testing.expect_value(t, err, "")
+	testing.expect_value(t, len(spans), 16)
+
+	testing.expect_value(t, spans[0].text, "normal ")
+	testing.expect_value(t, spans[0].style.bold, false)
+
+	testing.expect_value(t, spans[1].text, "bold")
+	testing.expect_value(t, spans[1].style.bold, true)
+	testing.expect_value(t, spans[1].style.italic, false)
+
+	testing.expect_value(t, spans[3].text, "italic")
+	testing.expect_value(t, spans[3].style.italic, true)
+	testing.expect_value(t, spans[3].style.bold, false)
+
+	testing.expect_value(t, spans[5].text, "underline")
+	testing.expect_value(t, spans[5].style.underline, true)
+
+	testing.expect_value(t, spans[7].text, "strikethrough")
+	testing.expect_value(t, spans[7].style.strikethrough, true)
+
+	testing.expect_value(t, spans[9].text, "red")
+	testing.expect_value(t, spans[9].style.color_str, "red")
+
+	testing.expect_value(t, spans[11].text, "transparent bg")
+	testing.expect_value(t, spans[11].style.bg_color_str, "blue")
+	testing.expect_value(t, spans[11].style.has_bg, true)
+	testing.expect_value(t, spans[11].style.opacity, 0.5)
+	testing.expect_value(t, spans[11].style.bg_opacity, 0.8)
+
+	testing.expect_value(t, spans[13].text, "styled")
+	testing.expect_value(t, spans[13].style.font_size, 24.0)
+	testing.expect_value(t, spans[13].style.font_path, "custom.ttf")
+
+	testing.expect_value(t, spans[14].text, " ")
+	testing.expect_value(t, spans[15].text, "orange")
+	testing.expect_value(t, spans[15].style.color_str, "orange")
+}

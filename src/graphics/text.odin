@@ -7,11 +7,24 @@ import "core:strconv"
 import "core:strings"
 import stbtt "vendor:stb/truetype"
 
+import bbcode "logging:bbcode"
+
 Text_Span :: struct {
-	text:     string,
-	color:    [4]f32,
-	bg_color: [4]f32,
-	has_bg:   bool,
+	text:          string,
+	color:         [4]f32,
+	bg_color:      [4]f32,
+	has_bg:        bool,
+	bold:          bool,
+	italic:        bool,
+	underline:     bool,
+	strikethrough: bool,
+	font_size:     f32,
+	font_path:     string,
+}
+
+Glyph_Key :: struct {
+	r:            rune,
+	pixel_height: int,
 }
 
 Font :: struct {
@@ -22,7 +35,7 @@ Font :: struct {
 	ascent:       int,
 	descent:      int,
 	line_gap:     int,
-	glyphs:       map[rune]Cached_Glyph,
+	glyphs:       map[Glyph_Key]Cached_Glyph,
 }
 
 Cached_Glyph :: struct {
@@ -51,7 +64,7 @@ font_init :: proc(f: ^Font, font_path: string, pixel_height: f32) -> bool {
 	f.descent = int(desc)
 	f.line_gap = int(lg)
 
-	f.glyphs = make(map[rune]Cached_Glyph)
+	f.glyphs = make(map[Glyph_Key]Cached_Glyph)
 	return true
 }
 
@@ -63,11 +76,14 @@ font_destroy :: proc(f: ^Font) {
 	delete(f.data)
 }
 
-get_glyph :: proc(f: ^Font, r: rune) -> Cached_Glyph {
-	if g, ok := f.glyphs[r]; ok do return g
+get_glyph :: proc(f: ^Font, r: rune, pixel_height: f32) -> Cached_Glyph {
+	key := Glyph_Key{r = r, pixel_height = int(pixel_height + 0.5)}
+	if g, ok := f.glyphs[key]; ok do return g
+
+	scale := stbtt.ScaleForPixelHeight(&f.info, pixel_height)
 
 	w, h, xoff, yoff: c.int
-	bitmap := stbtt.GetCodepointBitmap(&f.info, f.scale, f.scale, r, &w, &h, &xoff, &yoff)
+	bitmap := stbtt.GetCodepointBitmap(&f.info, scale, scale, r, &w, &h, &xoff, &yoff)
 	defer if bitmap != nil do stbtt.FreeBitmap(bitmap, nil)
 
 	adv, lsb: c.int
@@ -86,7 +102,7 @@ get_glyph :: proc(f: ^Font, r: rune) -> Cached_Glyph {
 		advance = int(adv),
 		pixels  = pixels,
 	}
-	f.glyphs[r] = g
+	f.glyphs[key] = g
 	return g
 }
 
@@ -97,6 +113,8 @@ append_glyph_preloaded :: proc(
 	x_pos, y_pos: f32,
 	color: [4]f32,
 	vp: linalg.Matrix4f32,
+	bold := false,
+	italic := false,
 ) {
 	if g.width == 0 || g.height == 0 do return
 
@@ -113,7 +131,15 @@ append_glyph_preloaded :: proc(
 				gx := px + f32(x)
 				gy := py - f32(y)
 
+				if italic {
+					skew := f32(g.height - y) * 0.2
+					gx += skew
+				}
+
 				append_quad(batch, gx, gy - 1.0, gx + 1.0, gy, c, vp)
+				if bold {
+					append_quad(batch, gx + 1.0, gy - 1.0, gx + 2.0, gy, c, vp)
+				}
 			}
 		}
 	}
@@ -127,7 +153,7 @@ append_glyph :: proc(
 	color: [4]f32,
 	vp: linalg.Matrix4f32,
 ) -> f32 {
-	g := get_glyph(f, r)
+	g := get_glyph(f, r, f.pixel_height)
 	append_glyph_preloaded(batch, f, g, x_pos, y_pos, color, vp)
 	return f32(g.advance) * f.scale
 }
@@ -146,20 +172,40 @@ draw_text_bbcode_ttf :: proc(
 	cursor_y := y
 
 	for span in spans {
+		current_pixel_height := span.font_size if span.font_size > 0.0 else f.pixel_height
+		active_font := f
+		if span.font_path != "" {
+			if custom_font, ok := custom_fonts_get(span.font_path, current_pixel_height); ok {
+				active_font = custom_font
+			}
+		}
+
+		scale := stbtt.ScaleForPixelHeight(&active_font.info, current_pixel_height)
+
 		for r in span.text {
 			if r == '\n' {
 				cursor_x = x
-				cursor_y -= f32(f.ascent - f.descent + f.line_gap) * f.scale
+				cursor_y -= f32(active_font.ascent - active_font.descent + active_font.line_gap) * scale
 				continue
 			}
-			g := get_glyph(f, r)
-			advance := f32(g.advance) * f.scale
+			g := get_glyph(active_font, r, current_pixel_height)
+			advance := f32(g.advance) * scale
 			if span.has_bg {
-				y0 := cursor_y + f32(f.descent) * f.scale
-				y1 := cursor_y + f32(f.ascent) * f.scale
+				y0 := cursor_y + f32(active_font.descent) * scale
+				y1 := cursor_y + f32(active_font.ascent) * scale
 				append_quad(batch, cursor_x, y0, cursor_x + advance, y1, span.bg_color, vp)
 			}
-			append_glyph_preloaded(batch, f, g, cursor_x, cursor_y, span.color, vp)
+			append_glyph_preloaded(batch, active_font, g, cursor_x, cursor_y, span.color, vp, span.bold, span.italic)
+			if span.underline {
+				y_under := cursor_y + f32(active_font.descent) * scale * 0.3
+				thickness := max(f32(1.0), scale)
+				append_quad(batch, cursor_x, y_under - thickness, cursor_x + advance, y_under, span.color, vp)
+			}
+			if span.strikethrough {
+				y_strike := cursor_y + f32(active_font.ascent) * scale * 0.3
+				thickness := max(f32(1.0), scale)
+				append_quad(batch, cursor_x, y_strike - thickness/2.0, cursor_x + advance, y_strike + thickness/2.0, span.color, vp)
+			}
 			cursor_x += advance
 		}
 	}
@@ -244,149 +290,50 @@ parse_bbcode_spans :: proc(
 	default_color: [4]f32 = {1, 1, 1, 1},
 	allocator := context.allocator,
 ) -> []Text_Span {
-	spans: [dynamic]Text_Span
-	spans.allocator = allocator
-
-	color_stack: [dynamic][3]f32
-	color_stack.allocator = allocator
-	append(&color_stack, [3]f32{default_color[0], default_color[1], default_color[2]})
-	defer delete(color_stack)
-
-	opacity_stack: [dynamic]f32
-	opacity_stack.allocator = allocator
-	append(&opacity_stack, default_color[3])
-	defer delete(opacity_stack)
-
-	bg_color_stack: [dynamic][3]f32
-	bg_color_stack.allocator = allocator
-	append(&bg_color_stack, [3]f32{0, 0, 0})
-	defer delete(bg_color_stack)
-
-	bg_opacity_stack: [dynamic]f32
-	bg_opacity_stack.allocator = allocator
-	append(&bg_opacity_stack, 1.0)
-	defer delete(bg_opacity_stack)
-
-	has_bg_stack: [dynamic]bool
-	has_bg_stack.allocator = allocator
-	append(&has_bg_stack, false)
-	defer delete(has_bg_stack)
-
-	get_current_style :: proc(
-		color_stack: ^[dynamic][3]f32,
-		opacity_stack: ^[dynamic]f32,
-		bg_color_stack: ^[dynamic][3]f32,
-		bg_opacity_stack: ^[dynamic]f32,
-		has_bg_stack: ^[dynamic]bool,
-	) -> (
-		color: [4]f32,
-		bg_color: [4]f32,
-		has_bg: bool,
-	) {
-		c := color_stack[len(color_stack) - 1]
-		a := opacity_stack[len(opacity_stack) - 1]
-		bg_c := bg_color_stack[len(bg_color_stack) - 1]
-		bg_a := bg_opacity_stack[len(bg_opacity_stack) - 1]
-		hb := has_bg_stack[len(has_bg_stack) - 1]
-
-		return {c[0], c[1], c[2], a}, {bg_c[0], bg_c[1], bg_c[2], bg_a}, hb
-	}
-
-	i := 0
-	n := len(text)
-	start_idx := 0
-
-	for i < n {
-		if text[i] == '[' {
-			if i > start_idx {
-				c, bg_c, hb := get_current_style(
-					&color_stack,
-					&opacity_stack,
-					&bg_color_stack,
-					&bg_opacity_stack,
-					&has_bg_stack,
-				)
-				append(
-					&spans,
-					Text_Span{text = text[start_idx:i], color = c, bg_color = bg_c, has_bg = hb},
-				)
-			}
-
-			close_idx := strings.index_byte(text[i:], ']')
-			if close_idx != -1 {
-				close_idx += i
-				tag_content := text[i + 1:close_idx]
-				i = close_idx + 1
-				start_idx = i
-
-				if strings.has_prefix(tag_content, "c=") {
-					val := tag_content[2:]
-					append(&color_stack, parse_color_to_rgb(val))
-				} else if tag_content == "/c" {
-					if len(color_stack) > 1 do pop(&color_stack)
-				} else if strings.has_prefix(tag_content, "color=") {
-					// Alias for [c=...] — kept for convenience
-					val := tag_content[6:]
-					append(&color_stack, parse_color_to_rgb(val))
-				} else if tag_content == "/color" {
-					if len(color_stack) > 1 do pop(&color_stack)
-				} else if strings.has_prefix(tag_content, "opacity=") {
-					val := tag_content[8:]
-					append(&opacity_stack, parse_opacity(val))
-				} else if tag_content == "/opacity" {
-					if len(opacity_stack) > 1 do pop(&opacity_stack)
-				} else if strings.has_prefix(tag_content, "bg=") {
-					val := tag_content[3:]
-					append(&bg_color_stack, parse_color_to_rgb(val))
-					append(&has_bg_stack, true)
-				} else if strings.has_prefix(tag_content, "bg_color=") {
-					val := tag_content[9:]
-					append(&bg_color_stack, parse_color_to_rgb(val))
-					append(&has_bg_stack, true)
-				} else if tag_content == "/bg" || tag_content == "/bg_color" {
-					if len(bg_color_stack) > 1 do pop(&bg_color_stack)
-					if len(has_bg_stack) > 1 do pop(&has_bg_stack)
-				} else if strings.has_prefix(tag_content, "bg_opacity=") {
-					val := tag_content[11:]
-					append(&bg_opacity_stack, parse_opacity(val))
-				} else if tag_content == "/bg_opacity" {
-					if len(bg_opacity_stack) > 1 do pop(&bg_opacity_stack)
-				} else if tag_content == "b" {
-					unimplemented("Bold tag")
-				} else if tag_content == "/b" {
-					unimplemented("Bold tag")
-				} else if tag_content == "i" {
-					unimplemented("Italic tag")
-				} else if tag_content == "/i" {
-					unimplemented("Italic tag")
-				} else if tag_content == "u" {
-					unimplemented("Underline tag")
-				} else if tag_content == "/u" {
-					unimplemented("Underline tag")
-				} else {
-					unimplemented("Unknown tag")
-				}
-				continue
-			}
+	bb_spans, err_msg, ok := bbcode.parse_spans(text, allocator)
+	if !ok {
+		delete(err_msg, allocator)
+		s := Text_Span {
+			text = strings.clone(text, allocator),
+			color = default_color,
 		}
-		i += 1
+		res := make([]Text_Span, 1, allocator)
+		res[0] = s
+		return res
 	}
 
-	if n > start_idx {
-		c, bg_c, hb := get_current_style(
-			&color_stack,
-			&opacity_stack,
-			&bg_color_stack,
-			&bg_opacity_stack,
-			&has_bg_stack,
-		)
-		append(
-			&spans,
-			Text_Span{text = text[start_idx:n], color = c, bg_color = bg_c, has_bg = hb},
-		)
+	res := make([]Text_Span, len(bb_spans), allocator)
+	for span, i in bb_spans {
+		color := default_color
+		if span.style.color_str != "" {
+			rgb := parse_color_to_rgb(span.style.color_str)
+			color = {rgb[0], rgb[1], rgb[2], span.style.opacity}
+		} else {
+			color.a = span.style.opacity
+		}
+
+		bg_color: [4]f32
+		if span.style.bg_color_str != "" {
+			rgb := parse_color_to_rgb(span.style.bg_color_str)
+			bg_color = {rgb[0], rgb[1], rgb[2], span.style.bg_opacity}
+		}
+
+		res[i] = Text_Span {
+			text          = span.text,
+			color         = color,
+			bg_color      = bg_color,
+			has_bg        = span.style.has_bg,
+			bold          = span.style.bold,
+			italic        = span.style.italic,
+			underline     = span.style.underline,
+			strikethrough = span.style.strikethrough,
+			font_size     = span.style.font_size,
+			font_path     = span.style.font_path,
+		}
 	}
 
-	return spans[:]
+	delete(bb_spans, allocator)
+	return res
 }
 
 font8x8_basic := [128][8]u8 {
@@ -554,6 +501,8 @@ append_char :: proc(
 	scale: f32,
 	color: [4]f32,
 	vp: linalg.Matrix4f32,
+	bold := false,
+	italic := false,
 ) {
 	c_idx := int(ch)
 	if c_idx >= 128 do return
@@ -566,7 +515,16 @@ append_char :: proc(
 			if bit == 1 {
 				px := x_pos + f32(x) * scale
 				py := y_pos + f32(7 - y) * scale
+
+				if italic {
+					skew := f32(7 - y) * scale * 0.2
+					px += skew
+				}
+
 				append_quad(batch, px, py, px + scale, py + scale, color, vp)
+				if bold {
+					append_quad(batch, px + scale, py, px + scale * 2.0, py + scale, color, vp)
+				}
 			}
 		}
 	}
@@ -604,8 +562,54 @@ draw_text_bbcode :: proc(
 					vp,
 				)
 			}
-			append_char(batch, ch, cursor_x, cursor_y, scale, span.color, vp)
+			append_char(batch, ch, cursor_x, cursor_y, scale, span.color, vp, span.bold, span.italic)
+			if span.underline {
+				append_quad(batch, cursor_x, cursor_y - scale, cursor_x + 8.0 * scale, cursor_y, span.color, vp)
+			}
+			if span.strikethrough {
+				append_quad(batch, cursor_x, cursor_y + 3.0 * scale, cursor_x + 8.0 * scale, cursor_y + 4.0 * scale, span.color, vp)
+			}
 			cursor_x += 8.0 * scale
 		}
 	}
 }
+
+Custom_Font_Cache_Entry :: struct {
+	font:   Font,
+	exists: bool,
+}
+
+custom_fonts: map[string]Custom_Font_Cache_Entry
+
+custom_fonts_get :: proc(path: string, pixel_height: f32) -> (^Font, bool) {
+	if custom_fonts == nil {
+		custom_fonts = make(map[string]Custom_Font_Cache_Entry)
+	}
+
+	if entry, ok := &custom_fonts[path]; ok {
+		if !entry.exists do return nil, false
+		return &entry.font, true
+	}
+
+	font: Font
+	if !font_init(&font, path, pixel_height) {
+		custom_fonts[path] = Custom_Font_Cache_Entry{exists = false}
+		return nil, false
+	}
+
+	custom_fonts[path] = Custom_Font_Cache_Entry{font = font, exists = true}
+	entry, _ := &custom_fonts[path]
+	return &entry.font, true
+}
+
+custom_fonts_destroy :: proc() {
+	if custom_fonts == nil do return
+	for path, &entry in custom_fonts {
+		if entry.exists {
+			font_destroy(&entry.font)
+		}
+	}
+	delete(custom_fonts)
+	custom_fonts = nil
+}
+

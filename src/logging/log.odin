@@ -352,7 +352,7 @@ console_destroy :: proc(data: rawptr) {
 create_console_output :: proc(
 	lowest_level: log.Level,
 	format: Log_Format,
-	allocator: runtime.Allocator = {},
+	allocator: runtime.Allocator = context.allocator,
 	suppressed_tags: Log_Tags = {},
 ) -> Log_Output {
 	alloc := allocator

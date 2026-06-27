@@ -43,6 +43,11 @@ System_Param_Builder :: struct {
 	destroy:   proc(sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr),
 }
 
+Resource_Destructor :: struct {
+	destroy_proc: rawptr,
+	wrapper:      proc(destroy_proc: rawptr, ptr: rawptr, allocator: runtime.Allocator),
+}
+
 World :: struct {
 	entities:                     [dynamic]Entity_Meta,
 	free_list:                    [dynamic]u32,
@@ -50,6 +55,7 @@ World :: struct {
 	root:                         ^Archetype,
 	allocator:                    runtime.Allocator,
 	resources:                    map[typeid]rawptr,
+	resource_destructors:         map[typeid]Resource_Destructor,
 	target_index:                 map[Entity][dynamic]Relation_Link,
 	iteration_depth:              int,
 	event_manager:                events.Event_Manager,
@@ -79,6 +85,7 @@ new_world :: proc(allocator := context.allocator) -> World {
 	arch_init(w.root, nil, w.allocator)
 	w.archetypes[0] = w.root
 	w.resources = make(map[typeid]rawptr, 16, w.allocator)
+	w.resource_destructors = make(map[typeid]Resource_Destructor, 16, w.allocator)
 	w.target_index = make(map[Entity][dynamic]Relation_Link, 16, w.allocator)
 	w.transition_buffer = make([dynamic]typeid, 0, 16, w.allocator)
 	events.init(&w.event_manager, w.allocator)
@@ -103,7 +110,12 @@ world_destroy :: proc(w: ^World) {
 		arch_deinit(arch)
 		free(arch, w.allocator)
 	}
-	for _, ptr in w.resources {
+	for tid, ptr in w.resources {
+		if dest, ok := w.resource_destructors[tid]; ok {
+			if dest.destroy_proc != nil && dest.wrapper != nil {
+				dest.wrapper(dest.destroy_proc, ptr, w.allocator)
+			}
+		}
 		free(ptr, w.allocator)
 	}
 	for _, links in w.target_index {
@@ -125,6 +137,7 @@ world_destroy :: proc(w: ^World) {
 	delete(w.free_list)
 	delete(w.systems_to_run)
 	delete(w.resources)
+	delete(w.resource_destructors)
 	delete(w.param_builders)
 
 	delete(w.serialization_procs)

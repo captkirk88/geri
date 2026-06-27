@@ -10,16 +10,12 @@ import "../src/ecs"
 import "../src/ecs/params"
 import fps "../src/fps"
 import graphics "../src/graphics"
+import log "../src/logging"
 import "../src/windowing"
 import "core:c"
 import "core:math"
 import "core:math/rand"
 import "vendor:sdl3"
-
-main :: proc() {
-	t := testing.T{}
-	test_render_pipeline_initialization(&t)
-}
 
 Batch2D :: graphics.Batch2D
 
@@ -76,6 +72,7 @@ append_circle :: proc(
 
 setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing.Window_Context)) {
 	circle_count := 10_000
+
 	margin: f32 = 0.08 // keep circles fully on screen (radius)
 	win_w: c.int
 	win_h: c.int
@@ -180,16 +177,43 @@ draw_circles_system :: proc(
 		graphics.draw_text_bbcode_ttf(
 			batch,
 			font,
-			"[c=#ff0022]Custom Hex Colors", // and [b]Bold[/b][/c]!",
+			"[c=#ff0022]Custom Hex Colors and [b]Bold[/b] [i]Italic[/i] [u]Underline[/u] [s]Strikethrough[/s][/c]!",
 			-350,
 			0,
+			{1, 1, 1, 1},
+			vp,
+		)
+		graphics.draw_text_bbcode_ttf(
+			batch,
+			font,
+			"Arial size 16: [font_size=16]Small Arial text[/font_size]",
+			-350,
+			-50,
+			{1, 1, 1, 1},
+			vp,
+		)
+		graphics.draw_text_bbcode_ttf(
+			batch,
+			font,
+			"Consolas: [font=C:\\Windows\\Fonts\\consola.ttf][font_size=20]Consolas size 20[/font_size] and normal[/font]",
+			-350,
+			-100,
+			{1, 1, 1, 1},
+			vp,
+		)
+		graphics.draw_text_bbcode_ttf(
+			batch,
+			font,
+			"Non-existent fallback: [font=non_existent.ttf]Should render as default font[/font]",
+			-350,
+			-150,
 			{1, 1, 1, 1},
 			vp,
 		)
 	}
 }
 
-test_render_pipeline_initialization :: proc(t: ^testing.T) {
+main :: proc() {
 	application := app.app_init(
 		[]app.Plugin{windowing.Window_Plugin(), graphics.Render_Plugin(), fps.Fps_Plugin()},
 	)
@@ -209,15 +233,15 @@ test_render_pipeline_initialization :: proc(t: ^testing.T) {
 	}
 
 	window_ctx := ecs.world_get_resource(&application.world, windowing.Window_Context)
-	testing.expect(t, window_ctx != nil, "Window_Context should be initialized")
+	assert(window_ctx != nil, "Window_Context should be initialized")
 	if window_ctx != nil {
-		testing.expect(t, window_ctx.window != nil, "SDL Window should be created")
+		assert(window_ctx.window != nil, "SDL Window should be created")
 	}
 
 	render_ctx := ecs.world_get_resource(&application.world, Render_Context)
-	testing.expect(t, render_ctx != nil, "Render_Context should be initialized")
+	assert(render_ctx != nil, "Render_Context should be initialized")
 	if render_ctx != nil {
-		testing.expect(t, render_ctx.device != nil, "WGPU Device should be created")
+		assert(render_ctx.device != nil, "WGPU Device should be created")
 	}
 
 	// Register systems
