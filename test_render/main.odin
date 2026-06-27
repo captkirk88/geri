@@ -180,7 +180,7 @@ draw_circles_system :: proc(
 		graphics.draw_text_bbcode_ttf(
 			batch,
 			font,
-			"[color=#ff00ff]Custom Hex Colors[/color] and [color=yellow][bg=red][bg_opacity=0.5]Yellow on Transparent Red[/bg_opacity][/bg][/color]!",
+			"[c=#ff0022]Custom Hex Colors", // and [b]Bold[/b][/c]!",
 			-350,
 			0,
 			{1, 1, 1, 1},

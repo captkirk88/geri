@@ -11,7 +11,7 @@ build/
 *.exe
 *.pdb
 *.bin
-*.png
+!*test_*.png
 
 # strudel designs
 *.strudel
