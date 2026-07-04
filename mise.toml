@@ -30,6 +30,17 @@ run = [
   "odin run test_render {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe -- 10s",
 ]
 
+[tasks.test-shader]
+description = "Run the graphics shader pass and compute pipeline test on the main thread"
+interactive = true
+depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
+run = [
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin run test_shader {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_shader.exe -- 10s",
+]
+
+
 [tasks.bench]
 interactive = true
 # quiet = true

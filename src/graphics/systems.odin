@@ -3,7 +3,9 @@ package graphics
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import log "../logging"
 import "../windowing"
+import "base:runtime"
 import "core:bytes"
 import "core:image"
 import bmp "core:image/bmp"
@@ -19,6 +21,38 @@ handle_resize_system :: proc() {
 
 capture_screenshot :: proc(w: ^ecs.World, path: string, format: Screenshot_Format = .TGA) {
 	ecs.world_add_resource(w, Screenshot_Request{path = path, format = format})
+}
+
+screenshot_recording_begin :: proc(w: ^ecs.World, path: string) {
+	rec := Screenshot_Recording {
+		path   = path,
+		frames = make([dynamic][]byte),
+		active = true,
+	}
+	ecs.world_add_resource(w, rec, proc(r: ^Screenshot_Recording, alloc: runtime.Allocator) {
+		for frame in r.frames {
+			delete(frame)
+		}
+		delete(r.frames)
+	})
+}
+
+screenshot_recording_end :: proc(w: ^ecs.World) {
+	rec := ecs.world_get_resource(w, Screenshot_Recording)
+	if rec != nil {
+		rec.active = false
+		log.debug(
+			"screenshot_recording_end: path=%s, width=%d, height=%d, frame_count=%d",
+			rec.path,
+			rec.width,
+			rec.height,
+			len(rec.frames),
+		)
+		if len(rec.frames) > 0 {
+			write_gif(rec.path, rec.width, rec.height, rec.frames[:])
+		}
+		ecs.world_remove_resource(w, Screenshot_Recording)
+	}
 }
 
 frame_start_system :: proc(
@@ -59,6 +93,7 @@ frame_start_system :: proc(
 	encoder_desc := wgpu.CommandEncoderDescriptor {
 		label = "Frame Encoder",
 	}
+
 	fctx.encoder = wgpu.DeviceCreateCommandEncoder(ctx.device, &encoder_desc)
 }
 
@@ -74,9 +109,12 @@ frame_present_system :: proc(
 
 	if world != nil {
 		req := ecs.world_get_resource(world, Screenshot_Request)
-		if req != nil {
+		rec := ecs.world_get_resource(world, Screenshot_Recording)
+
+		if req != nil || (rec != nil && rec.active) {
 			width := ctx.config.width
 			height := ctx.config.height
+			// Round up to next 256 boundary for copy buffer padding
 			bytes_per_row := (width * 4 + 255) & ~u32(255)
 			buffer_size := u64(bytes_per_row * height)
 
@@ -112,7 +150,7 @@ frame_present_system :: proc(
 			wgpu.QueueSubmit(ctx.queue, {cmd_buffer})
 			wgpu.CommandBufferRelease(cmd_buffer)
 
-			cb_data := bool(false)
+			cb_data := false
 			map_cb :: proc "c" (
 				status: wgpu.MapAsyncStatus,
 				message: wgpu.StringView,
@@ -135,13 +173,7 @@ frame_present_system :: proc(
 
 			mapped_data := wgpu.BufferGetConstMappedRange(read_buf, 0, uint(buffer_size))
 			if len(mapped_data) > 0 {
-				img := image.Image {
-					width    = int(width),
-					height   = int(height),
-					channels = 4,
-					depth    = 8,
-				}
-				img.pixels.buf = make([dynamic]u8, int(width * height * 4), context.temp_allocator)
+				pixels := make([]byte, int(width * height * 4))
 
 				for y in 0 ..< height {
 					row_offset := int(y * bytes_per_row)
@@ -151,33 +183,57 @@ frame_present_system :: proc(
 					if ctx.config.format == .BGRA8Unorm || ctx.config.format == .BGRA8UnormSrgb {
 						for x in 0 ..< width {
 							idx := int(x * 4)
-							img.pixels.buf[dest_offset + idx + 0] = row_data[idx + 2] // R
-							img.pixels.buf[dest_offset + idx + 1] = row_data[idx + 1] // G
-							img.pixels.buf[dest_offset + idx + 2] = row_data[idx + 0] // B
-							img.pixels.buf[dest_offset + idx + 3] = row_data[idx + 3] // A
+							pixels[dest_offset + idx + 0] = row_data[idx + 2] // R
+							pixels[dest_offset + idx + 1] = row_data[idx + 1] // G
+							pixels[dest_offset + idx + 2] = row_data[idx + 0] // B
+							pixels[dest_offset + idx + 3] = row_data[idx + 3] // A
 						}
 					} else {
-						copy(img.pixels.buf[dest_offset:dest_offset + int(width * 4)], row_data)
+						copy(pixels[dest_offset:dest_offset + int(width * 4)], row_data)
 					}
 				}
 
-				switch req.format {
-				case .TGA:
-					tga.save(req.path, &img)
-				case .BMP:
-					bmp.save(req.path, &img)
-				case .QOI:
-					qoi.save(req.path, &img)
-				case .PNG:
-					path_c := strings.clone_to_cstring(req.path, context.temp_allocator)
-					stbi.write_png(
-						path_c,
-						i32(width),
-						i32(height),
-						4,
-						raw_data(img.pixels.buf),
-						i32(width * 4),
+				if req != nil {
+					img := image.Image {
+						width    = int(width),
+						height   = int(height),
+						channels = 4,
+						depth    = 8,
+					}
+					img.pixels.buf = make(
+						[dynamic]u8,
+						int(width * height * 4),
+						context.temp_allocator,
 					)
+					copy(img.pixels.buf[:], pixels)
+
+					switch req.format {
+					case .TGA:
+						tga.save(req.path, &img)
+					case .BMP:
+						bmp.save(req.path, &img)
+					case .QOI:
+						qoi.save(req.path, &img)
+					case .PNG:
+						path_c := strings.clone_to_cstring(req.path, context.temp_allocator)
+						stbi.write_png(
+							path_c,
+							i32(width),
+							i32(height),
+							4,
+							raw_data(img.pixels.buf),
+							i32(width * 4),
+						)
+					}
+					ecs.world_remove_resource(world, Screenshot_Request)
+				}
+
+				if rec != nil && rec.active {
+					rec.width = int(width)
+					rec.height = int(height)
+					append(&rec.frames, pixels)
+				} else {
+					delete(pixels)
 				}
 
 				wgpu.BufferUnmap(read_buf)
@@ -190,8 +246,6 @@ frame_present_system :: proc(
 			fctx.encoder = nil
 			fctx.texture_view = nil
 			fctx.texture = nil
-
-			ecs.world_remove_resource(world, Screenshot_Request)
 			return
 		}
 	}

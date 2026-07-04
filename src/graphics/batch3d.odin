@@ -18,7 +18,6 @@ struct VertexOutput {
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    // Simple pass-through. In a real engine, we'd multiply by projection/view matrices.
     out.clip_position = vec4<f32>(model.position, 1.0);
     out.color = model.color;
     return out;
@@ -30,12 +29,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 `
 
+// init_batch3d initializes a 3D batching context, creating CPU dynamic arrays
+// and the default WGPU Render Pipeline.
 init_batch3d :: proc(device: wgpu.Device, format: wgpu.TextureFormat) -> Batch3D {
 	batch := Batch3D{}
 	batch.vertices = make([dynamic]Vertex3D)
 	batch.indices = make([dynamic]u32)
 
-	// Shader
+	// Shader module
 	shader_source := wgpu.ShaderSourceWGSL {
 		chain = {sType = .ShaderSourceWGSL},
 		code  = SHADER_3D,
@@ -82,9 +83,6 @@ init_batch3d :: proc(device: wgpu.Device, format: wgpu.TextureFormat) -> Batch3D
 		targets     = &color_target,
 	}
 
-	// Depth Stencil (optional, skipping for now to keep it simple, but we'd normally want it for 3D)
-	// depth_stencil := wgpu.DepthStencilState{ ... }
-
 	pipeline_desc := wgpu.RenderPipelineDescriptor {
 		layout = pipeline_layout,
 		vertex = {
@@ -101,9 +99,13 @@ init_batch3d :: proc(device: wgpu.Device, format: wgpu.TextureFormat) -> Batch3D
 	batch.pipeline = wgpu.DeviceCreateRenderPipeline(device, &pipeline_desc)
 	batch.vert_buf_cap = 0
 	batch.ind_buf_cap = 0
+	batch.shader_passes = make([dynamic]Shader_Pass)
+	batch.active_pass_idx = -1
 	return batch
 }
 
+// destroy_batch3d releases all CPU-side and WGPU-side resources owned by the 3D batch,
+// including all custom shader passes registered inside it.
 destroy_batch3d :: proc(batch: ^Batch3D) {
 	if batch.pipeline != nil {
 		wgpu.RenderPipelineRelease(batch.pipeline)
@@ -117,24 +119,32 @@ destroy_batch3d :: proc(batch: ^Batch3D) {
 		wgpu.BufferRelease(batch.index_buf)
 		batch.index_buf = nil
 	}
+	for &pass in batch.shader_passes {
+		destroy_shader_pass(&pass)
+	}
+	delete(batch.shader_passes)
+	batch.shader_passes = nil
 	delete(batch.vertices)
 	batch.vertices = nil
 	delete(batch.indices)
 	batch.indices = nil
 }
 
-batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPassEncoder) {
-	if len(batch.indices) == 0 do return
+// batch3d_prepare_buffers ensures GPU buffers are correctly allocated and copies
+// current vertex and index data from CPU memory to the GPU buffer.
+batch3d_prepare_buffers :: proc(batch: ^Batch3D, ctx: ^Render_Context) {
+	if len(batch.vertices) == 0 || len(batch.indices) == 0 do return
 
 	vert_size := len(batch.vertices) * size_of(Vertex3D)
 	ind_size := len(batch.indices) * size_of(u32)
 
 	// Reallocate vertex buffer if needed
+	// Buffer includes Storage usage to support compute/mesh shader emulation stages
 	if vert_size > batch.vert_buf_cap {
 		if batch.vertex_buf != nil do wgpu.BufferRelease(batch.vertex_buf)
 		batch.vert_buf_cap = max(vert_size, batch.vert_buf_cap * 2, 1024)
 		desc := wgpu.BufferDescriptor {
-			usage = {.Vertex, .CopyDst},
+			usage = {.Vertex, .CopyDst, .Storage},
 			size  = u64(batch.vert_buf_cap),
 		}
 		batch.vertex_buf = wgpu.DeviceCreateBuffer(ctx.device, &desc)
@@ -146,7 +156,7 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 		batch.ind_buf_cap = max(ind_size, batch.ind_buf_cap * 2, 1024)
 		batch.ind_buf_cap = (batch.ind_buf_cap + 3) & ~int(3)
 		desc := wgpu.BufferDescriptor {
-			usage = {.Index, .CopyDst},
+			usage = {.Index, .CopyDst, .Storage},
 			size  = u64(batch.ind_buf_cap),
 		}
 		batch.index_buf = wgpu.DeviceCreateBuffer(ctx.device, &desc)
@@ -173,14 +183,140 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 		raw_data(batch.indices),
 		uint(padded_ind_size),
 	)
+}
 
-	// Draw
-	wgpu.RenderPassEncoderSetPipeline(pass, batch.pipeline)
-	wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, batch.vertex_buf, 0, u64(vert_size))
-	wgpu.RenderPassEncoderSetIndexBuffer(pass, batch.index_buf, .Uint32, 0, u64(ind_size))
-	wgpu.RenderPassEncoderDrawIndexed(pass, u32(len(batch.indices)), 1, 0, 0, 0)
+// batch3d_draw_buffers issues draw commands for the batch's current GPU buffer contents,
+// using either the default pipeline or the active custom render pass (and its uniforms).
+batch3d_draw_buffers :: proc(batch: ^Batch3D, pass: wgpu.RenderPassEncoder, index_count: u32) {
+	if batch.vertex_buf == nil || batch.index_buf == nil || index_count == 0 do return
 
-	// Clear
+	pipeline := batch.pipeline
+	bind_group: wgpu.BindGroup = nil
+
+	// Check if there is an active custom Render shader pass
+	if batch.active_pass_idx >= 0 && batch.active_pass_idx < len(batch.shader_passes) {
+		sp := batch.shader_passes[batch.active_pass_idx]
+		if sp.type == .Render && sp.render_pipeline != nil {
+			pipeline = sp.render_pipeline
+			bind_group = sp.bind_group
+		}
+	}
+
+	wgpu.RenderPassEncoderSetPipeline(pass, pipeline)
+	
+	// Bind custom uniforms at @group(0) if present
+	if bind_group != nil {
+		wgpu.RenderPassEncoderSetBindGroup(pass, 0, bind_group, nil)
+	}
+
+	vert_size := u64(len(batch.vertices) * size_of(Vertex3D))
+	if vert_size == 0 do vert_size = u64(batch.vert_buf_cap)
+	
+	wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, batch.vertex_buf, 0, vert_size)
+	wgpu.RenderPassEncoderSetIndexBuffer(pass, batch.index_buf, .Uint32, 0, u64(batch.ind_buf_cap))
+	wgpu.RenderPassEncoderDrawIndexed(pass, index_count, 1, 0, 0, 0)
+}
+
+// batch3d_flush prepares WGPU buffers with the current CPU vertices, draws them,
+// and clears the CPU-side data array.
+batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPassEncoder) {
+	if len(batch.indices) == 0 do return
+
+	batch3d_prepare_buffers(batch, ctx)
+	batch3d_draw_buffers(batch, pass, u32(len(batch.indices)))
+
+	// Clear dynamic CPU buffers after draw
 	clear(&batch.vertices)
 	clear(&batch.indices)
+}
+
+// batch3d_run_compute executes a Compute Shader Pass on the batch's vertex and index buffers.
+// Automatically creates and updates bind groups if buffers are reallocated.
+batch3d_run_compute :: proc(
+	batch: ^Batch3D,
+	ctx: ^Render_Context,
+	encoder: wgpu.CommandEncoder,
+	pass_idx: int,
+	workgroups_x: u32,
+	workgroups_y := u32(1),
+	workgroups_z := u32(1),
+) {
+	if pass_idx < 0 || pass_idx >= len(batch.shader_passes) do return
+	pass := &batch.shader_passes[pass_idx]
+	if pass.type != .Compute || pass.compute_pipeline == nil do return
+
+	// Upload CPU data to buffers if CPU buffers contain any elements
+	if len(batch.vertices) > 0 && len(batch.indices) > 0 {
+		batch3d_prepare_buffers(batch, ctx)
+	}
+
+	if batch.vertex_buf == nil || batch.index_buf == nil do return
+
+	// Check if bind group needs to be created or recreated due to buffer reallocation
+	if pass.bind_group == nil || pass.last_vertex_buf != batch.vertex_buf || pass.last_index_buf != batch.index_buf {
+		if pass.bind_group != nil {
+			wgpu.BindGroupRelease(pass.bind_group)
+		}
+
+		// Binding 0: Vertices storage
+		// Binding 1: Indices storage
+		// Binding 2: Uniform Buffer (optional)
+		entries: [3]wgpu.BindGroupEntry
+		entry_count: u32 = 2
+
+		entries[0] = {
+			binding = 0,
+			buffer = batch.vertex_buf,
+			offset = 0,
+			size = u64(batch.vert_buf_cap),
+		}
+		entries[1] = {
+			binding = 1,
+			buffer = batch.index_buf,
+			offset = 0,
+			size = u64(batch.ind_buf_cap),
+		}
+
+		if pass.uniform_buf != nil {
+			entry_count = 3
+			entries[2] = {
+				binding = 2,
+				buffer = pass.uniform_buf,
+				offset = 0,
+				size = (pass.uniform_size + 255) & ~u64(255),
+			}
+		}
+
+		bg_desc := wgpu.BindGroupDescriptor {
+			layout = pass.bind_group_layout,
+			entryCount = uint(entry_count),
+			entries = &entries[0],
+		}
+		pass.bind_group = wgpu.DeviceCreateBindGroup(ctx.device, &bg_desc)
+		pass.last_vertex_buf = batch.vertex_buf
+		pass.last_index_buf = batch.index_buf
+	}
+
+	// Begin compute pass and dispatch
+	compute_pass_desc := wgpu.ComputePassDescriptor{}
+	compute_pass := wgpu.CommandEncoderBeginComputePass(encoder, &compute_pass_desc)
+	defer {
+		wgpu.ComputePassEncoderEnd(compute_pass)
+		wgpu.ComputePassEncoderRelease(compute_pass)
+	}
+
+	wgpu.ComputePassEncoderSetPipeline(compute_pass, pass.compute_pipeline)
+	wgpu.ComputePassEncoderSetBindGroup(compute_pass, 0, pass.bind_group, nil)
+	wgpu.ComputePassEncoderDispatchWorkgroups(compute_pass, workgroups_x, workgroups_y, workgroups_z)
+}
+
+// batch3d_add_shader_pass registers a custom shader pass into the batch, returning its index.
+batch3d_add_shader_pass :: proc(batch: ^Batch3D, pass: Shader_Pass) -> int {
+	append(&batch.shader_passes, pass)
+	return len(batch.shader_passes) - 1
+}
+
+// batch3d_set_active_pass sets the active shader pass index. Set to -1 to use default rendering.
+batch3d_set_active_pass :: proc(batch: ^Batch3D, pass_idx: int) {
+	batch.active_pass_idx = pass_idx
 }

@@ -1,3 +1,4 @@
+// This is just a test program for the graphics module.
 package main
 
 import camera "../src/camera"
@@ -15,6 +16,7 @@ import "../src/ecs/params"
 import fps "../src/fps"
 import graphics "../src/graphics"
 import log "../src/logging"
+import gtime "../src/time"
 import "../src/windowing"
 import "core:c"
 import "core:math"
@@ -295,30 +297,12 @@ movement_system :: proc(world: ^ecs.World, window_res: params.Res(windowing.Wind
 	}
 }
 
-parse_duration :: proc(s: string) -> (time.Duration, bool) {
-	if len(s) < 2 do return 0, false
-
-	suffix := s[len(s) - 1]
-	num_part := s[:len(s) - 1]
-
-	val, ok := strconv.parse_f64(num_part)
-	if !ok do return 0, false
-
-	switch suffix {
-	case 's':
-		return time.Duration(val * f64(time.Second)), true
-	case 'm':
-		return time.Duration(val * f64(time.Minute)), true
-	case:
-		return 0, false
-	}
-}
 
 main :: proc() {
 	args := os.args
 	duration := 10 * time.Second
 	if len(args) > 1 {
-		if parsed, ok := parse_duration(args[1]); ok {
+		if parsed, ok := gtime.parse_duration(args[1]); ok {
 			duration = parsed
 		}
 	}
@@ -357,6 +341,9 @@ main :: proc() {
 	start_time := time.tick_now()
 	screenshot_taken := false
 	screenshot_time := duration / 2
+	frame_count := 0
+
+	graphics.screenshot_recording_begin(&application.world, "test_render_animation.gif")
 
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
@@ -371,5 +358,12 @@ main :: proc() {
 		}
 
 		app.app_update(&application)
+
+		frame_count += 1
+		if frame_count == 120 {
+			graphics.screenshot_recording_end(&application.world)
+			log.info("Finished recording %d frames, shutting down.", frame_count)
+			ecs.emit(&application.world, app.App_Exit_Event{})
+		}
 	}
 }

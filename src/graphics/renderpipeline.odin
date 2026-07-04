@@ -28,20 +28,8 @@ main_render_system :: proc(
 		color = {0.1, 0.2, 0.3, 1.0} // Default dark blue
 	}
 
-	color_attachment := wgpu.RenderPassColorAttachment{
-		view       = fctx.texture_view,
-		loadOp     = .Clear,
-		storeOp    = .Store,
-		clearValue = color,
-		depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
-	}
-
-	pass_desc := wgpu.RenderPassDescriptor{
-		colorAttachmentCount = 1,
-		colorAttachments = &color_attachment,
-	}
-
-	render_pass := wgpu.CommandEncoderBeginRenderPass(fctx.encoder, &pass_desc)
+	render_pass := begin_render_pass(fctx, .Clear, color)
+	defer end_render_pass(render_pass)
 
 	if batch3d.ptr != nil {
 		batch3d_flush(batch3d.ptr, ctx, render_pass)
@@ -50,7 +38,64 @@ main_render_system :: proc(
 	if batch2d.ptr != nil {
 		batch2d_flush(batch2d.ptr, ctx, render_pass)
 	}
-
-	wgpu.RenderPassEncoderEnd(render_pass)
-	wgpu.RenderPassEncoderRelease(render_pass)
 }
+
+begin_render_pass :: proc(
+	fctx: ^Frame_Context,
+	load_op: wgpu.LoadOp = .Load,
+	clear_color: wgpu.Color = {},
+	store_op: wgpu.StoreOp = .Store,
+	depth_stencil: ^wgpu.RenderPassDepthStencilAttachment = nil,
+	resolve_target: wgpu.TextureView = nil,
+) -> wgpu.RenderPassEncoder {
+	color_attachment := wgpu.RenderPassColorAttachment {
+		view          = fctx.texture_view,
+		loadOp        = load_op,
+		storeOp       = store_op,
+		clearValue    = clear_color,
+		depthSlice    = wgpu.DEPTH_SLICE_UNDEFINED,
+		resolveTarget = resolve_target,
+	}
+	pass_desc := wgpu.RenderPassDescriptor {
+		colorAttachmentCount   = 1,
+		colorAttachments       = &color_attachment,
+		depthStencilAttachment = depth_stencil,
+	}
+	return wgpu.CommandEncoderBeginRenderPass(fctx.encoder, &pass_desc)
+}
+
+end_render_pass :: proc(pass: wgpu.RenderPassEncoder) {
+	wgpu.RenderPassEncoderEnd(pass)
+	wgpu.RenderPassEncoderRelease(pass)
+}
+
+render_batch2d :: proc(
+	batch: ^Batch2D,
+	ctx: ^Render_Context,
+	fctx: ^Frame_Context,
+	load_op: wgpu.LoadOp = .Load,
+	clear_color: wgpu.Color = {},
+	store_op: wgpu.StoreOp = .Store,
+	depth_stencil: ^wgpu.RenderPassDepthStencilAttachment = nil,
+	resolve_target: wgpu.TextureView = nil,
+) {
+	pass := begin_render_pass(fctx, load_op, clear_color, store_op, depth_stencil, resolve_target)
+	defer end_render_pass(pass)
+	batch2d_flush(batch, ctx, pass)
+}
+
+render_batch3d :: proc(
+	batch: ^Batch3D,
+	ctx: ^Render_Context,
+	fctx: ^Frame_Context,
+	load_op: wgpu.LoadOp = .Load,
+	clear_color: wgpu.Color = {},
+	store_op: wgpu.StoreOp = .Store,
+	depth_stencil: ^wgpu.RenderPassDepthStencilAttachment = nil,
+	resolve_target: wgpu.TextureView = nil,
+) {
+	pass := begin_render_pass(fctx, load_op, clear_color, store_op, depth_stencil, resolve_target)
+	defer end_render_pass(pass)
+	batch3d_flush(batch, ctx, pass)
+}
+

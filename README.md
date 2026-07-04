@@ -4,6 +4,8 @@
 
 Geri is a ECS (Entity Component System) framework for Odin inspired by [Bevy](https://bevyengine.org/).
 
+![test_shader_animation.gif](test_shader_animation.gif)
+
 ## Test
 
 ```bash

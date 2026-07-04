@@ -95,22 +95,7 @@ fps_render_system :: proc(
 
 	graphics.draw_text(batch, text, x, y, font, 1.0, c.color, vp)
 
-	// Open a new render pass with LoadOp:.Load so we draw on top of the scene
-	// without clearing it.
-	color_attachment := wgpu.RenderPassColorAttachment {
-		view       = fctx.texture_view,
-		loadOp     = .Load,
-		storeOp    = .Store,
-		depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
-	}
-	pass_desc := wgpu.RenderPassDescriptor {
-		colorAttachmentCount = 1,
-		colorAttachments     = &color_attachment,
-	}
-	render_pass := wgpu.CommandEncoderBeginRenderPass(fctx.encoder, &pass_desc)
-	graphics.batch2d_flush(batch, ctx, render_pass)
-	wgpu.RenderPassEncoderEnd(render_pass)
-	wgpu.RenderPassEncoderRelease(render_pass)
+	graphics.render_batch2d(batch, ctx, fctx)
 }
 
 // System: cleans up the Fps_Batch on app exit.
