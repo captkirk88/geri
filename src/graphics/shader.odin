@@ -1,13 +1,15 @@
 package graphics
 
+import "base:runtime"
 import "core:fmt"
+import "core:io"
 import "vendor:wgpu"
 
 // create_render_shader_pass compiles a WGSL shader code into a render pipeline matching the vertex layout (2D or 3D).
 // If uniform_size > 0, it creates a unified uniform buffer and binds it at @group(0) @binding(0).
 create_render_shader_pass :: proc(
 	device: wgpu.Device,
-	wgsl_source: string,
+	wgsl_source: io.Reader,
 	vertex_entry: string = "vs_main",
 	fragment_entry: string = "fs_main",
 	is_3d: bool = false,
@@ -20,10 +22,14 @@ create_render_shader_pass :: proc(
 	pass.type = .Render
 	pass.uniform_size = uniform_size
 
+	// Read WGSL source from Reader
+	wgsl_code, read_ok := read_all(wgsl_source, context.temp_allocator)
+	if !read_ok do return pass, false
+
 	// Compile Shader Module
 	shader_source := wgpu.ShaderSourceWGSL {
 		chain = {sType = .ShaderSourceWGSL},
-		code = wgsl_source,
+		code = wgsl_code,
 	}
 	shader_desc := wgpu.ShaderModuleDescriptor {
 		nextInChain = &shader_source.chain,
@@ -172,7 +178,7 @@ create_render_shader_pass :: proc(
 // - Binding 2: Uniform Buffer (uniform, optional - active if uniform_size > 0)
 create_compute_shader_pass :: proc(
 	device: wgpu.Device,
-	wgsl_source: string,
+	wgsl_source: io.Reader,
 	entry_point: string = "cs_main",
 	uniform_size: u64 = 0,
 ) -> (
@@ -182,10 +188,14 @@ create_compute_shader_pass :: proc(
 	pass.type = .Compute
 	pass.uniform_size = uniform_size
 
+	// Read WGSL source from Reader
+	wgsl_code, read_ok := read_all(wgsl_source, context.temp_allocator)
+	if !read_ok do return pass, false
+
 	// Compile Shader Module
 	shader_source := wgpu.ShaderSourceWGSL {
 		chain = {sType = .ShaderSourceWGSL},
-		code = wgsl_source,
+		code = wgsl_code,
 	}
 	shader_desc := wgpu.ShaderModuleDescriptor {
 		nextInChain = &shader_source.chain,
@@ -266,19 +276,29 @@ create_compute_shader_pass :: proc(
 shader_pass_update_uniforms :: proc(
 	pass: ^Shader_Pass,
 	ctx: ^Render_Context,
-	data: rawptr,
-	size: int,
+	uniforms: any,
 ) {
 	if pass.uniform_buf == nil || pass.uniform_size == 0 do return
+
+	uniforms_info := runtime.type_info_base(type_info_of(uniforms.id))
+	uniforms_size := uniforms_info.size
+
 	assert(
-		u64(size) <= pass.uniform_size,
+		u64(uniforms_size) <= pass.uniform_size,
 		fmt.tprintf(
-			"Uniform data size %d exceeds allocated uniform buffer size %d",
-			size,
+			"Uniform struct (size %d) exceeds uniform buffer capacity %d",
+			uniforms_size,
 			pass.uniform_size,
 		),
 	)
-	wgpu.QueueWriteBuffer(ctx.queue, pass.uniform_buf, 0, data, uint(size))
+
+	wgpu.QueueWriteBuffer(
+		ctx.queue,
+		pass.uniform_buf,
+		0,
+		uniforms.data,
+		uint(uniforms_size),
+	)
 }
 
 // destroy_shader_pass releases all WGPU resources owned by the shader pass.
@@ -307,4 +327,29 @@ destroy_shader_pass :: proc(pass: ^Shader_Pass) {
 		wgpu.ShaderModuleRelease(pass.shader_module)
 		pass.shader_module = nil
 	}
+}
+
+@(private = "file")
+read_all :: proc(r: io.Reader, allocator := context.allocator) -> (string, bool) {
+	buf: [4096]byte
+	b: [dynamic]byte
+	b.allocator = allocator
+
+	success := false
+	defer if !success do delete(b)
+
+	for {
+		n, err := io.read(r, buf[:])
+		if n > 0 {
+			append(&b, ..buf[:n])
+		}
+		if err != nil {
+			if err == .EOF {
+				success = true
+				break
+			}
+			return "", false
+		}
+	}
+	return string(b[:]), true
 }

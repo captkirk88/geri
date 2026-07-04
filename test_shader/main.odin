@@ -32,6 +32,13 @@ Shader_Pass_Resource :: struct {
 	index_count:  int,
 }
 
+MyUniforms :: struct {
+	time:      f32,
+	intensity: f32,
+	aspect:    f32,
+	padding:   f32,
+}
+
 // Compute shader to deform vertices along sphere normal to create a jelly blob effect
 COMPUTE_SHADER :: `
 struct Vertex {
@@ -41,10 +48,10 @@ struct Vertex {
     color: array<f32, 4>,
 }
 struct MyUniforms {
-    time: f32,
+	time: f32,
     intensity: f32,
-    aspect: f32,
-    padding: f32,
+	aspect: f32,
+	padding: f32,
 }
 @group(0) @binding(0) var<storage, read_write> vertices: array<Vertex>;
 @group(0) @binding(1) var<storage, read_write> indices: array<u32>;
@@ -103,10 +110,10 @@ struct VertexOutput {
     @location(1) light: f32,
 }
 struct MyUniforms {
-    time: f32,
+	time: f32,
     intensity: f32,
-    aspect: f32,
-    padding: f32,
+	aspect: f32,
+	padding: f32,
 }
 @group(0) @binding(0) var<uniform> uniforms: MyUniforms;
 
@@ -148,9 +155,10 @@ setup_system :: proc(
 	log.info("Compiling and initializing 3D blob shader passes...")
 
 	// 1. Compile 3D Render Shader Pass
+	render_r: strings.Reader
 	render_pass, render_ok := graphics.create_render_shader_pass(
 		ctx.device,
-		RENDER_SHADER,
+		strings.to_reader(&render_r, RENDER_SHADER),
 		"vs_main",
 		"fs_main",
 		true, // is_3d = true
@@ -163,9 +171,10 @@ setup_system :: proc(
 	}
 
 	// 2. Compile Compute Shader Pass
+	compute_r: strings.Reader
 	compute_pass, compute_ok := graphics.create_compute_shader_pass(
 		ctx.device,
-		COMPUTE_SHADER,
+		strings.to_reader(&compute_r, COMPUTE_SHADER),
 		"cs_main",
 		16,
 	)
@@ -231,19 +240,22 @@ draw_shader_system :: proc(
 
 	// 1. Update uniforms (time, intensity, aspect, padding)
 	shader_data.time += 0.016
-	uniforms := [4]f32{shader_data.time, 1.0, aspect, 0.0}
+	uniforms := MyUniforms {
+		time = shader_data.time,
+		intensity = 1.0,
+		aspect = aspect,
+		padding = 0.0,
+	}
 
 	graphics.shader_pass_update_uniforms(
 		&shader_data.compute_pass,
 		ctx,
-		&uniforms[0],
-		size_of(uniforms),
+		uniforms,
 	)
 	graphics.shader_pass_update_uniforms(
 		&shader_data.render_pass,
 		ctx,
-		&uniforms[0],
-		size_of(uniforms),
+		uniforms,
 	)
 
 	// 2. Generate 3D UV Sphere once at startup
