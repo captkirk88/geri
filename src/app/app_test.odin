@@ -176,3 +176,48 @@ test_render_schedule_main_thread :: proc(t: ^testing.T) {
 	testing.expect(t, res_b != nil && res_b.value == 22)
 }
 
+@(test)
+test_modify_system :: proc(t: ^testing.T) {
+	app := app_init()
+	defer app_destroy(&app)
+
+	ctx := Test_Context{}
+	ctx.order = make([dynamic]string, app.world.allocator)
+	defer delete(ctx.order)
+	ecs.world_add_resource(&app.world, ctx)
+
+	sys_first :: proc(ctx: params.Res(Test_Context)) {
+		if sync.mutex_guard(&ctx.ptr.mutex) {
+			append(&ctx.ptr.order, "first")
+		}
+	}
+
+	sys_second :: proc(ctx: params.Res(Test_Context)) {
+		if sync.mutex_guard(&ctx.ptr.mutex) {
+			append(&ctx.ptr.order, "second")
+		}
+	}
+
+	// Register systems without constraints
+	app_add_system(&app, Update, sys_second)
+	app_add_system(&app, Update, sys_first)
+
+	// Modify sys_second to run after sys_first
+	ok := app_modify_system(&app, Update, rawptr(sys_second), after = []rawptr{rawptr(sys_first)})
+	testing.expect(t, ok, "app_modify_system should return true for registered system")
+
+	app_run_schedule(&app, Update)
+
+	retrieved_ctx := ecs.world_get_resource(&app.world, Test_Context)
+	testing.expect(t, retrieved_ctx != nil)
+	if retrieved_ctx != nil {
+		testing.expect_value(t, len(retrieved_ctx.order), 2)
+		if len(retrieved_ctx.order) == 2 {
+			testing.expect_value(t, retrieved_ctx.order[0], "first")
+			testing.expect_value(t, retrieved_ctx.order[1], "second")
+		}
+		delete(retrieved_ctx.order)
+	}
+}
+
+

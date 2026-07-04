@@ -93,7 +93,7 @@ fps_render_system :: proc(
 	x := -w / 2 + padding
 	y := h / 2 - font_size - padding
 
-	graphics.draw_text_bbcode_ttf(batch, font, text, x, y, c.color, vp)
+	graphics.draw_text(batch, text, x, y, font, 1.0, c.color, vp)
 
 	// Open a new render pass with LoadOp:.Load so we draw on top of the scene
 	// without clearing it.
@@ -151,7 +151,13 @@ fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		before = []rawptr{rawptr(graphics.frame_present_system)},
 	)
 
-	app.app_add_system(a, app.Last, fps_cleanup_system)
+	app.app_add_system(
+		a,
+		app.PostRender,
+		fps_cleanup_system,
+		after = []rawptr{rawptr(graphics.frame_present_system)},
+		before = []rawptr{rawptr(graphics.render_cleanup_system)},
+	)
 }
 
 // Fps_Plugin adds an averaged FPS counter overlay to the top-left of the screen.

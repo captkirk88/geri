@@ -2,6 +2,7 @@ package windowing
 
 import "../app"
 import "../ecs"
+import params "../ecs/params"
 import "vendor:sdl3"
 
 // Default descriptor if not set by the user
@@ -38,6 +39,20 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 
 	// Add event pump system
 	app.app_add_system(a, app.First, event_pump_system)
+	app.app_add_system(a, app.PostUpdate, window_cleanup_system)
+}
+
+window_cleanup_system :: proc(
+	exit_events: params.EventReader(app.App_Exit_Event),
+	window_ctx: params.Res(Window_Context),
+) {
+	if len(exit_events.events) > 0 {
+		if window_ctx.ptr != nil && window_ctx.ptr.window != nil {
+			sdl3.DestroyWindow(window_ctx.ptr.window)
+			window_ctx.ptr.window = nil
+		}
+		sdl3.Quit()
+	}
 }
 
 Window_Plugin :: proc(descriptor: ^Window_Descriptor = nil) -> app.Plugin {

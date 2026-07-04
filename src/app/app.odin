@@ -124,6 +124,25 @@ app_add_system_raw :: proc(
 	schedule_add_system_raw(sched, &app.world, system, name, before, after)
 }
 
+// Modifies an already registered system's before/after execution constraints in the specified schedule.
+// Returns true if the system was found and modified.
+app_modify_system :: proc(
+	app: ^App,
+	schedule_label: Schedule_Label,
+	procedure: rawptr,
+	before: []rawptr = nil,
+	after: []rawptr = nil,
+) -> bool {
+	sync.mutex_lock(&app.mutex)
+	sched, ok := app.schedules[schedule_label]
+	sync.mutex_unlock(&app.mutex)
+
+	if !ok || sched == nil do return false
+
+	return schedule_modify_system(sched, procedure, before, after)
+}
+
+
 // Returns true if the schedule label requires the main thread (e.g. rendering, event pumping).
 is_main_thread_schedule :: proc(label: Schedule_Label) -> bool {
 	if label == First do return true

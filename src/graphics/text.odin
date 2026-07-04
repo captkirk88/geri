@@ -77,7 +77,10 @@ font_destroy :: proc(f: ^Font) {
 }
 
 get_glyph :: proc(f: ^Font, r: rune, pixel_height: f32) -> Cached_Glyph {
-	key := Glyph_Key{r = r, pixel_height = int(pixel_height + 0.5)}
+	key := Glyph_Key {
+		r            = r,
+		pixel_height = int(pixel_height + 0.5),
+	}
 	if g, ok := f.glyphs[key]; ok do return g
 
 	scale := stbtt.ScaleForPixelHeight(&f.info, pixel_height)
@@ -158,55 +161,146 @@ append_glyph :: proc(
 	return f32(g.advance) * f.scale
 }
 
-draw_text_bbcode_ttf :: proc(
+draw_text :: proc(
 	batch: ^Batch2D,
-	f: ^Font,
 	text: string,
 	x, y: f32,
+	font: ^Font = nil,
+	scale: f32 = 1.0,
 	default_color: [4]f32 = {1, 1, 1, 1},
 	vp: linalg.Matrix4f32 = linalg.MATRIX4F32_IDENTITY,
 ) {
-	spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
+	if font != nil {
+		spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
 
-	cursor_x := x
-	cursor_y := y
+		cursor_x := x
+		cursor_y := y
 
-	for span in spans {
-		current_pixel_height := span.font_size if span.font_size > 0.0 else f.pixel_height
-		active_font := f
-		if span.font_path != "" {
-			if custom_font, ok := custom_fonts_get(span.font_path, current_pixel_height); ok {
-				active_font = custom_font
+		for span in spans {
+			current_pixel_height := span.font_size if span.font_size > 0.0 else font.pixel_height
+			active_font := font
+			if span.font_path != "" {
+				if custom_font, ok := custom_fonts_get(span.font_path, current_pixel_height); ok {
+					active_font = custom_font
+				}
+			}
+
+			scale_val := stbtt.ScaleForPixelHeight(&active_font.info, current_pixel_height)
+
+			for r in span.text {
+				if r == '\n' {
+					cursor_x = x
+					cursor_y -=
+						f32(active_font.ascent - active_font.descent + active_font.line_gap) * scale_val
+					continue
+				}
+				g := get_glyph(active_font, r, current_pixel_height)
+				advance := f32(g.advance) * scale_val
+				if span.has_bg {
+					y0 := cursor_y + f32(active_font.descent) * scale_val
+					y1 := cursor_y + f32(active_font.ascent) * scale_val
+					append_quad(batch, cursor_x, y0, cursor_x + advance, y1, span.bg_color, vp)
+				}
+				append_glyph_preloaded(
+					batch,
+					active_font,
+					g,
+					cursor_x,
+					cursor_y,
+					span.color,
+					vp,
+					span.bold,
+					span.italic,
+				)
+				if span.underline {
+					y_under := cursor_y + f32(active_font.descent) * scale_val * 0.3
+					thickness := max(f32(1.0), scale_val)
+					append_quad(
+						batch,
+						cursor_x,
+						y_under - thickness,
+						cursor_x + advance,
+						y_under,
+						span.color,
+						vp,
+					)
+				}
+				if span.strikethrough {
+					y_strike := cursor_y + f32(active_font.ascent) * scale_val * 0.3
+					thickness := max(f32(1.0), scale_val)
+					append_quad(
+						batch,
+						cursor_x,
+						y_strike - thickness / 2.0,
+						cursor_x + advance,
+						y_strike + thickness / 2.0,
+						span.color,
+						vp,
+					)
+				}
+				cursor_x += advance
 			}
 		}
+	} else {
+		spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
 
-		scale := stbtt.ScaleForPixelHeight(&active_font.info, current_pixel_height)
+		cursor_x := x
+		cursor_y := y
 
-		for r in span.text {
-			if r == '\n' {
-				cursor_x = x
-				cursor_y -= f32(active_font.ascent - active_font.descent + active_font.line_gap) * scale
-				continue
+		for span in spans {
+			for i in 0 ..< len(span.text) {
+				ch := span.text[i]
+				if ch == '\n' {
+					cursor_x = x
+					cursor_y -= 10.0 * scale
+					continue
+				}
+				if span.has_bg {
+					append_quad(
+						batch,
+						cursor_x,
+						cursor_y,
+						cursor_x + 8.0 * scale,
+						cursor_y + 8.0 * scale,
+						span.bg_color,
+						vp,
+					)
+				}
+				append_char(
+					batch,
+					ch,
+					cursor_x,
+					cursor_y,
+					scale,
+					span.color,
+					vp,
+					span.bold,
+					span.italic,
+				)
+				if span.underline {
+					append_quad(
+						batch,
+						cursor_x,
+						cursor_y - scale,
+						cursor_x + 8.0 * scale,
+						cursor_y,
+						span.color,
+						vp,
+					)
+				}
+				if span.strikethrough {
+					append_quad(
+						batch,
+						cursor_x,
+						cursor_y + 3.0 * scale,
+						cursor_x + 8.0 * scale,
+						cursor_y + 4.0 * scale,
+						span.color,
+						vp,
+					)
+				}
+				cursor_x += 8.0 * scale
 			}
-			g := get_glyph(active_font, r, current_pixel_height)
-			advance := f32(g.advance) * scale
-			if span.has_bg {
-				y0 := cursor_y + f32(active_font.descent) * scale
-				y1 := cursor_y + f32(active_font.ascent) * scale
-				append_quad(batch, cursor_x, y0, cursor_x + advance, y1, span.bg_color, vp)
-			}
-			append_glyph_preloaded(batch, active_font, g, cursor_x, cursor_y, span.color, vp, span.bold, span.italic)
-			if span.underline {
-				y_under := cursor_y + f32(active_font.descent) * scale * 0.3
-				thickness := max(f32(1.0), scale)
-				append_quad(batch, cursor_x, y_under - thickness, cursor_x + advance, y_under, span.color, vp)
-			}
-			if span.strikethrough {
-				y_strike := cursor_y + f32(active_font.ascent) * scale * 0.3
-				thickness := max(f32(1.0), scale)
-				append_quad(batch, cursor_x, y_strike - thickness/2.0, cursor_x + advance, y_strike + thickness/2.0, span.color, vp)
-			}
-			cursor_x += advance
 		}
 	}
 }
@@ -294,7 +388,7 @@ parse_bbcode_spans :: proc(
 	if !ok {
 		delete(err_msg, allocator)
 		s := Text_Span {
-			text = strings.clone(text, allocator),
+			text  = strings.clone(text, allocator),
 			color = default_color,
 		}
 		res := make([]Text_Span, 1, allocator)
@@ -530,49 +624,7 @@ append_char :: proc(
 	}
 }
 
-draw_text_bbcode :: proc(
-	batch: ^Batch2D,
-	text: string,
-	x, y: f32,
-	scale: f32 = 1.0,
-	default_color: [4]f32 = {1, 1, 1, 1},
-	vp: linalg.Matrix4f32 = linalg.MATRIX4F32_IDENTITY,
-) {
-	spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
 
-	cursor_x := x
-	cursor_y := y
-
-	for span in spans {
-		for i in 0 ..< len(span.text) {
-			ch := span.text[i]
-			if ch == '\n' {
-				cursor_x = x
-				cursor_y -= 10.0 * scale
-				continue
-			}
-			if span.has_bg {
-				append_quad(
-					batch,
-					cursor_x,
-					cursor_y,
-					cursor_x + 8.0 * scale,
-					cursor_y + 8.0 * scale,
-					span.bg_color,
-					vp,
-				)
-			}
-			append_char(batch, ch, cursor_x, cursor_y, scale, span.color, vp, span.bold, span.italic)
-			if span.underline {
-				append_quad(batch, cursor_x, cursor_y - scale, cursor_x + 8.0 * scale, cursor_y, span.color, vp)
-			}
-			if span.strikethrough {
-				append_quad(batch, cursor_x, cursor_y + 3.0 * scale, cursor_x + 8.0 * scale, cursor_y + 4.0 * scale, span.color, vp)
-			}
-			cursor_x += 8.0 * scale
-		}
-	}
-}
 
 Custom_Font_Cache_Entry :: struct {
 	font:   Font,
@@ -593,11 +645,16 @@ custom_fonts_get :: proc(path: string, pixel_height: f32) -> (^Font, bool) {
 
 	font: Font
 	if !font_init(&font, path, pixel_height) {
-		custom_fonts[path] = Custom_Font_Cache_Entry{exists = false}
+		custom_fonts[path] = Custom_Font_Cache_Entry {
+			exists = false,
+		}
 		return nil, false
 	}
 
-	custom_fonts[path] = Custom_Font_Cache_Entry{font = font, exists = true}
+	custom_fonts[path] = Custom_Font_Cache_Entry {
+		font   = font,
+		exists = true,
+	}
 	entry, _ := &custom_fonts[path]
 	return &entry.font, true
 }
@@ -612,4 +669,3 @@ custom_fonts_destroy :: proc() {
 	delete(custom_fonts)
 	custom_fonts = nil
 }
-

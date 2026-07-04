@@ -2,15 +2,13 @@ package app
 
 import ecs "../ecs"
 import sys "../ecs/systems"
+import log "../logging"
 import reflect "../reflect"
 import "base:intrinsics"
 import "base:runtime"
-import "core:bufio"
-import "core:container/queue"
 import "core:fmt"
 import "core:mem"
-import "core:sync"
-import "core:thread"
+import "core:nbio"
 
 System_Metadata :: struct {
 	system: ^sys.System,
@@ -20,94 +18,25 @@ System_Metadata :: struct {
 }
 
 Schedule :: struct {
-	mutex:             sync.Mutex,
 	systems:           [dynamic]System_Metadata,
 	levels:            [dynamic][dynamic]int,
 	needs_compilation: bool,
-
-	// Pre-initialized Thread Pool
-	threads:           [dynamic]^thread.Thread,
-	task_queue:        queue.Queue(^sys.System),
-	queue_cond:        sync.Cond,
-	finished_cond:     sync.Cond,
-	remaining_tasks:   int,
-	should_exit:       bool,
 }
 
-// Worker thread procedure for executing systems from the schedule's queue.
-worker_proc :: proc(t: ^thread.Thread) {
-	context = runtime.default_context()
-	temp_alloc: runtime.Default_Temp_Allocator
-	runtime.default_temp_allocator_init(&temp_alloc, 4 * mem.Megabyte, context.allocator)
-	context.temp_allocator = runtime.default_temp_allocator(&temp_alloc)
-	defer runtime.default_temp_allocator_destroy(&temp_alloc)
-
-	sched := (^Schedule)(t.data)
-
-	for {
-		sync.mutex_lock(&sched.mutex)
-		for queue.len(sched.task_queue) == 0 && !sched.should_exit {
-			sync.cond_wait(&sched.queue_cond, &sched.mutex)
-		}
-
-		if sched.should_exit {
-			sync.mutex_unlock(&sched.mutex)
-			break
-		}
-
-		system := queue.pop_front(&sched.task_queue)
-		sync.mutex_unlock(&sched.mutex)
-
-		sys.execute_system(system)
-
-		sync.mutex_lock(&sched.mutex)
-		sched.remaining_tasks -= 1
-		if sched.remaining_tasks == 0 {
-			sync.cond_broadcast(&sched.finished_cond)
-		}
-		sync.mutex_unlock(&sched.mutex)
-	}
-}
-
-// Instantiates a new, uncompiled Schedule pointer, spawning its worker threads immediately.
+// Instantiates a new, uncompiled Schedule pointer, initializing the nbio event loop.
 schedule_new :: proc(thread_count := 4, allocator := context.allocator) -> ^Schedule {
 	sched := new(Schedule, allocator)
 	sched.systems = make([dynamic]System_Metadata, allocator)
 	sched.levels = make([dynamic][dynamic]int, allocator)
 	sched.needs_compilation = true
 
-	sched.threads = make([dynamic]^thread.Thread, allocator)
-	queue.init(&sched.task_queue, 16, allocator)
-	sched.should_exit = false
-
-	for i in 0 ..< thread_count {
-		t := thread.create(worker_proc)
-		if t != nil {
-			t.data = rawptr(sched)
-			append(&sched.threads, t)
-			thread.start(t)
-		}
-	}
+	nbio.acquire_thread_event_loop()
 
 	return sched
 }
 
-// Destroys the Schedule instance, notifying and joining all worker threads, then freeing resources.
+// Destroys the Schedule instance, releasing nbio event loop, then freeing resources.
 schedule_destroy :: proc(w: ^ecs.World, sched: ^Schedule) {
-	sync.mutex_lock(&sched.mutex)
-	sched.should_exit = true
-	sync.cond_broadcast(&sched.queue_cond)
-	sync.mutex_unlock(&sched.mutex)
-
-	for t in sched.threads {
-		thread.join(t)
-		thread.destroy(t)
-	}
-	delete(sched.threads)
-	queue.destroy(&sched.task_queue)
-
-	sync.mutex_lock(&sched.mutex)
-
 	for meta in sched.systems {
 		sys.destroy_system(w, meta.system, w.allocator)
 		delete(meta.before)
@@ -120,7 +49,7 @@ schedule_destroy :: proc(w: ^ecs.World, sched: ^Schedule) {
 	}
 	delete(sched.levels)
 
-	sync.mutex_unlock(&sched.mutex)
+	nbio.release_thread_event_loop()
 
 	free(sched, w.allocator)
 }
@@ -134,8 +63,6 @@ schedule_add_system :: proc(
 	before: []rawptr = nil,
 	after: []rawptr = nil,
 ) where intrinsics.type_is_proc(T) {
-	sync.mutex_lock(&sched.mutex)
-	defer sync.mutex_unlock(&sched.mutex)
 
 	s := sys.new_system(procedure, w.allocator)
 
@@ -165,9 +92,6 @@ schedule_add_system_raw :: proc(
 	before: []rawptr = nil,
 	after: []rawptr = nil,
 ) {
-	sync.mutex_lock(&sched.mutex)
-	defer sync.mutex_unlock(&sched.mutex)
-
 	meta: System_Metadata
 	meta.system = system
 	meta.name = name
@@ -367,21 +291,31 @@ compile_schedule :: proc(sched: ^Schedule) {
 	sched.needs_compilation = false
 }
 
-// Runs all systems in the schedule, compiling if needed and running parallel systems on multiple threads.
+Level_Context :: struct {
+	remaining: int,
+	done:      bool,
+}
+
+system_task_callback :: proc(op: ^nbio.Operation, system: ^sys.System, ctx: ^Level_Context) {
+	sys.execute_system(system)
+	ctx.remaining -= 1
+	if ctx.remaining == 0 {
+		ctx.done = true
+	}
+}
+
+// Runs all systems in the schedule, compiling if needed and running parallel systems on the nbio event loop.
 schedule_run :: proc(w: ^ecs.World, sched: ^Schedule, thread_count := 4) {
-	sync.mutex_lock(&sched.mutex)
 	if sched.needs_compilation {
 		compile_schedule(sched)
 	}
 	levels_count := len(sched.levels)
-	sync.mutex_unlock(&sched.mutex)
 
 	if levels_count == 0 {
 		return
 	}
 
 	for lvl_idx in 0 ..< levels_count {
-		sync.mutex_lock(&sched.mutex)
 		level := sched.levels[lvl_idx]
 		level_len := len(level)
 
@@ -391,34 +325,56 @@ schedule_run :: proc(w: ^ecs.World, sched: ^Schedule, thread_count := 4) {
 			sys.build_system(w, meta.system)
 		}
 
-		if level_len == 1 || thread_count <= 1 || len(sched.threads) == 0 {
-			sync.mutex_unlock(&sched.mutex)
-			for i in 0 ..< level_len {
-				sys_idx := level[i]
-				meta := sched.systems[sys_idx]
-				sys.execute_system(meta.system)
-			}
+		if level_len == 1 {
+			sys_idx := level[0]
+			meta := sched.systems[sys_idx]
+			sys.execute_system(meta.system)
 		} else {
-			sched.remaining_tasks = level_len
+			level_ctx := Level_Context {
+				remaining = level_len,
+				done      = false,
+			}
+
 			for i in 0 ..< level_len {
 				sys_idx := level[i]
 				meta := sched.systems[sys_idx]
-				queue.push_back(&sched.task_queue, meta.system)
+				nbio.next_tick_poly2(meta.system, &level_ctx, system_task_callback)
 			}
-			sync.cond_broadcast(&sched.queue_cond)
 
-			for sched.remaining_tasks > 0 {
-				sync.cond_wait(&sched.finished_cond, &sched.mutex)
+			err := nbio.run_until(&level_ctx.done)
+			if err != nil {
+				log.error(nbio.error_string(err))
 			}
-			sync.mutex_unlock(&sched.mutex)
 		}
 
-		sync.mutex_lock(&sched.mutex)
 		for i in 0 ..< level_len {
 			sys_idx := level[i]
 			meta := sched.systems[sys_idx]
 			sys.flush_system(w, meta.system)
 		}
-		sync.mutex_unlock(&sched.mutex)
 	}
 }
+
+// Modifies an already registered system's before/after execution constraints in the schedule.
+// Returns true if the system was found and modified.
+schedule_modify_system :: proc(
+	sched: ^Schedule,
+	procedure: rawptr,
+	before: []rawptr = nil,
+	after: []rawptr = nil,
+) -> bool {
+	for &meta in sched.systems {
+		if meta.system.procedure == procedure {
+			for b in before {
+				append(&meta.before, b)
+			}
+			for a in after {
+				append(&meta.after, a)
+			}
+			sched.needs_compilation = true
+			return true
+		}
+	}
+	return false
+}
+

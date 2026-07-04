@@ -101,11 +101,22 @@ init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat) -> Batch2D
 }
 
 destroy_batch2d :: proc(batch: ^Batch2D) {
-	if batch.pipeline != nil do wgpu.RenderPipelineRelease(batch.pipeline)
-	if batch.vertex_buf != nil do wgpu.BufferRelease(batch.vertex_buf)
-	if batch.index_buf != nil do wgpu.BufferRelease(batch.index_buf)
+	if batch.pipeline != nil {
+		wgpu.RenderPipelineRelease(batch.pipeline)
+		batch.pipeline = nil
+	}
+	if batch.vertex_buf != nil {
+		wgpu.BufferRelease(batch.vertex_buf)
+		batch.vertex_buf = nil
+	}
+	if batch.index_buf != nil {
+		wgpu.BufferRelease(batch.index_buf)
+		batch.index_buf = nil
+	}
 	delete(batch.vertices)
+	batch.vertices = nil
 	delete(batch.indices)
+	batch.indices = nil
 }
 
 batch2d_flush :: proc(batch: ^Batch2D, ctx: ^Render_Context, pass: wgpu.RenderPassEncoder) {

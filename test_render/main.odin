@@ -2,6 +2,7 @@ package main
 
 import camera "../src/camera"
 import transform "../src/transform"
+import "base:runtime"
 import "core:math/linalg"
 import "core:os"
 import "core:strconv"
@@ -102,7 +103,13 @@ setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing
 
 	font: graphics.Font
 	if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
-		ecs.world_add_resource(commands.ptr.world, font)
+		ecs.world_add_resource(
+			commands.ptr.world,
+			font,
+			proc(f: ^graphics.Font, alloc: runtime.Allocator) {
+				graphics.font_destroy(f)
+			},
+		)
 	}
 
 	for i in 0 ..< circle_count {
@@ -158,66 +165,73 @@ draw_circles_system :: proc(
 
 	font := ecs.world_get_resource(world, graphics.Font)
 	if font != nil {
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"Hello [color=red]Red[/color], [color=green]Green[/color], and [color=blue]Blue[/color]!",
 			-350,
 			150,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"Beautiful [color=orange]Odin[/color] TTF [opacity=0.4]Opacity 0.4[/opacity] and [opacity=0.8]0.8[/opacity]!",
 			-350,
 			100,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"[bg=blue]Solid Blue Background[/bg] - [bg=green][bg_opacity=0.4]Transparent Green BG[/bg_opacity][/bg]",
 			-350,
 			50,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"[c=#ff0022]Custom Hex Colors and [b]Bold[/b] [i]Italic[/i] [u]Underline[/u] [s]Strikethrough[/s][/c]!",
 			-350,
 			0,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"Arial size 16: [font_size=16]Small Arial text[/font_size]",
 			-350,
 			-50,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"Consolas: [font=C:\\Windows\\Fonts\\consola.ttf][font_size=20]Consolas size 20[/font_size] and normal[/font]",
 			-350,
 			-100,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
-		graphics.draw_text_bbcode_ttf(
+		graphics.draw_text(
 			batch,
-			font,
 			"Non-existent fallback: [font=non_existent.ttf]Should render as default font[/font]",
 			-350,
 			-150,
+			font,
+			1.0,
 			{1, 1, 1, 1},
 			vp,
 		)
@@ -313,17 +327,6 @@ main :: proc() {
 		[]app.Plugin{windowing.Window_Plugin(), graphics.Render_Plugin(), fps.Fps_Plugin()},
 	)
 	defer {
-		font := ecs.world_get_resource(&application.world, graphics.Font)
-		if font != nil {
-			graphics.font_destroy(font)
-		}
-
-		window_ctx := ecs.world_get_resource(&application.world, windowing.Window_Context)
-		if window_ctx != nil && window_ctx.window != nil {
-			sdl3.DestroyWindow(window_ctx.window)
-		}
-		sdl3.Quit()
-
 		app.app_destroy(&application)
 	}
 
@@ -364,7 +367,7 @@ main :: proc() {
 		}
 
 		if elapsed >= duration {
-			application.should_exit = true
+			ecs.emit(&application.world, app.App_Exit_Event{})
 		}
 
 		app.app_update(&application)

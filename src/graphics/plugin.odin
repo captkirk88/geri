@@ -137,7 +137,13 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	app.app_add_system(a, app.PreRender, frame_start_system)
 	app.app_add_system(a, app.Render, main_render_system)
 	app.app_add_system(a, app.PostRender, frame_present_system)
-	app.app_add_system(a, app.Last, render_cleanup_system)
+	app.app_add_system(
+		a,
+		app.PostRender,
+		render_cleanup_system,
+		after = []rawptr{rawptr(frame_present_system)},
+		before = []rawptr{rawptr(windowing.window_cleanup_system)},
+	)
 	app.app_add_system(a, app.First, handle_resize_system) // To resize surface
 }
 
@@ -146,20 +152,47 @@ render_cleanup_system :: proc(
 	batch2d: params.Res(Batch2D),
 	batch3d: params.Res(Batch3D),
 	render_ctx: params.Res(Render_Context),
+	fctx: params.Res(Frame_Context),
 ) {
 	if len(exit_events.events) > 0 {
 		custom_fonts_destroy()
 		if batch2d.ptr != nil do destroy_batch2d(batch2d.ptr)
 		if batch3d.ptr != nil do destroy_batch3d(batch3d.ptr)
 
-		if render_ctx.ptr != nil && render_ctx.ptr.device != nil {
-			wgpu.QueueRelease(render_ctx.ptr.queue)
-			wgpu.DeviceRelease(render_ctx.ptr.device)
-			wgpu.AdapterRelease(render_ctx.ptr.adapter)
-			wgpu.SurfaceRelease(render_ctx.ptr.surface)
-			wgpu.InstanceRelease(render_ctx.ptr.instance)
-			render_ctx.ptr.device = nil
-			render_ctx.ptr.queue = nil
+		if fctx.ptr != nil {
+			if fctx.ptr.encoder != nil {
+				wgpu.CommandEncoderRelease(fctx.ptr.encoder)
+				fctx.ptr.encoder = nil
+			}
+			if fctx.ptr.texture_view != nil {
+				wgpu.TextureViewRelease(fctx.ptr.texture_view)
+				fctx.ptr.texture_view = nil
+			}
+			fctx.ptr.texture = nil
+		}
+
+		if render_ctx.ptr != nil {
+			// Surface must be released BEFORE Queue, Device, Adapter, and Instance
+			if render_ctx.ptr.surface != nil {
+				wgpu.SurfaceRelease(render_ctx.ptr.surface)
+				render_ctx.ptr.surface = nil
+			}
+			if render_ctx.ptr.queue != nil {
+				wgpu.QueueRelease(render_ctx.ptr.queue)
+				render_ctx.ptr.queue = nil
+			}
+			if render_ctx.ptr.device != nil {
+				wgpu.DeviceRelease(render_ctx.ptr.device)
+				render_ctx.ptr.device = nil
+			}
+			if render_ctx.ptr.adapter != nil {
+				wgpu.AdapterRelease(render_ctx.ptr.adapter)
+				render_ctx.ptr.adapter = nil
+			}
+			if render_ctx.ptr.instance != nil {
+				wgpu.InstanceRelease(render_ctx.ptr.instance)
+				render_ctx.ptr.instance = nil
+			}
 		}
 	}
 }
