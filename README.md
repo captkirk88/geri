@@ -6,6 +6,9 @@ Geri is a ECS (Entity Component System) framework for Odin inspired by [Bevy](ht
 
 ![test_shader_animation.gif](test_shader_animation.gif)
 
+> [!NOTE]
+> It runs smooth but gif generation is glitchy, try running on your system (`mise test-shader`) and if you are not using windows, change the font path to a font available on your system.
+
 ## Test
 
 ```bash
