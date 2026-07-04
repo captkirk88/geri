@@ -13,7 +13,7 @@ test_batch2d_shader_pass_lifecycle :: proc(t: ^testing.T) {
 
 	// Test adding a dummy Shader_Pass
 	pass := Shader_Pass {
-		type = .Render,
+		type  = .Render,
 		label = "Dummy Render Pass",
 	}
 
@@ -26,7 +26,7 @@ test_batch2d_shader_pass_lifecycle :: proc(t: ^testing.T) {
 
 	// Add another compute pass
 	pass2 := Shader_Pass {
-		type = .Compute,
+		type  = .Compute,
 		label = "Dummy Compute Pass",
 	}
 	idx2 := batch2d_add_shader_pass(&batch, pass2)
@@ -53,7 +53,7 @@ test_batch3d_shader_pass_lifecycle :: proc(t: ^testing.T) {
 
 	// Test adding a dummy Shader_Pass
 	pass := Shader_Pass {
-		type = .Render,
+		type  = .Render,
 		label = "Dummy Render Pass 3D",
 	}
 
