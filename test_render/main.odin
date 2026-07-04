@@ -341,9 +341,6 @@ main :: proc() {
 	start_time := time.tick_now()
 	screenshot_taken := false
 	screenshot_time := duration / 2
-	frame_count := 0
-
-	graphics.screenshot_recording_begin(&application.world, "test_render_animation.gif")
 
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
@@ -358,12 +355,5 @@ main :: proc() {
 		}
 
 		app.app_update(&application)
-
-		frame_count += 1
-		if frame_count == 120 {
-			graphics.screenshot_recording_end(&application.world)
-			log.info("Finished recording %d frames, shutting down.", frame_count)
-			ecs.emit(&application.world, app.App_Exit_Event{})
-		}
 	}
 }
