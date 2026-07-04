@@ -5,6 +5,7 @@ import sys "../ecs/systems"
 import "base:intrinsics"
 import "core:strings"
 import "core:sync"
+import "core:thread"
 
 Plugin :: struct {
 	build:   proc(plugin: Plugin, app: ^App),
@@ -13,11 +14,13 @@ Plugin :: struct {
 }
 
 App :: struct {
-	world:        ecs.World,
-	schedules:    map[Schedule_Label]^Schedule,
-	should_exit:  bool,
-	mutex:        sync.Mutex,
-	thread_count: int,
+	world:           ecs.World,
+	schedules:       map[Schedule_Label]^Schedule,
+	should_exit:     bool,
+	mutex:           sync.Mutex,
+	thread_count:    int,
+	thread_pool:     ^thread.Pool,
+	has_thread_pool: bool,
 }
 
 Schedule_Label :: distinct string
@@ -41,6 +44,13 @@ app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> App
 	sys.world_init_default_params(&app.world)
 	app.thread_count = 4
 	app.schedules = make(map[Schedule_Label]^Schedule, 16, allocator)
+
+	if app.thread_count > 1 {
+		app.thread_pool = new(thread.Pool, allocator)
+		thread.pool_init(app.thread_pool, allocator, app.thread_count)
+		thread.pool_start(app.thread_pool)
+		app.has_thread_pool = true
+	}
 
 	app.schedules[Startup] = schedule_new(app.thread_count, allocator)
 	app.schedules[First] = schedule_new(app.thread_count, allocator)
@@ -71,6 +81,13 @@ app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> App
 app_destroy :: proc(app: ^App) {
 	sync.mutex_lock(&app.mutex)
 	defer sync.mutex_unlock(&app.mutex)
+
+	if app.has_thread_pool {
+		thread.pool_join(app.thread_pool)
+		thread.pool_destroy(app.thread_pool)
+		free(app.thread_pool, app.world.allocator)
+		app.thread_pool = nil
+	}
 
 	for _, sched in app.schedules {
 		schedule_destroy(&app.world, sched)
@@ -143,6 +160,14 @@ app_modify_system :: proc(
 }
 
 
+app_set_schedule_parallel :: proc(app: ^App, label: Schedule_Label, parallel: bool) {
+	sync.mutex_lock(&app.mutex)
+	defer sync.mutex_unlock(&app.mutex)
+	if sched, ok := app.schedules[label]; ok {
+		sched.parallel = parallel
+	}
+}
+
 // Returns true if the schedule label requires the main thread (e.g. rendering, event pumping).
 is_main_thread_schedule :: proc(label: Schedule_Label) -> bool {
 	if label == First do return true
@@ -154,14 +179,15 @@ is_main_thread_schedule :: proc(label: Schedule_Label) -> bool {
 app_run_schedule :: proc(app: ^App, schedule_label: Schedule_Label) {
 	sync.mutex_lock(&app.mutex)
 	sched, ok := app.schedules[schedule_label]
-	thread_count := app.thread_count
+	has_tp := app.has_thread_pool
 	sync.mutex_unlock(&app.mutex)
 
 	if ok && sched != nil {
-		if is_main_thread_schedule(schedule_label) {
-			thread_count = 1
+		pool: ^thread.Pool = nil
+		if has_tp && !is_main_thread_schedule(schedule_label) {
+			pool = app.thread_pool
 		}
-		schedule_run(&app.world, sched, thread_count)
+		schedule_run(&app.world, sched, pool)
 	}
 }
 

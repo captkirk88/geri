@@ -49,7 +49,7 @@ Resource_Destructor :: struct {
 }
 
 World :: struct {
-	entities:                     [dynamic]Entity_Meta,
+	entities:                     #soa[dynamic]Entity_Meta,
 	free_list:                    [dynamic]u32,
 	archetypes:                   map[u64]^Archetype,
 	root:                         ^Archetype,
@@ -72,6 +72,7 @@ World :: struct {
 	resource_serialization_names: map[string]typeid,
 	resource_serialization_types: map[typeid]string,
 	query_cache:                  map[u64]QueryIter,
+	query_cache_epoch:            u32,
 	cache_mutex:                  sync.Mutex,
 }
 
@@ -79,7 +80,7 @@ new_world :: proc(allocator := context.allocator) -> World {
 	w: World
 	w.allocator = allocator
 	w.archetypes = make(map[u64]^Archetype, 16, w.allocator)
-	w.entities = make([dynamic]Entity_Meta, w.allocator)
+	w.entities = make(#soa[dynamic]Entity_Meta, w.allocator)
 	w.free_list = make([dynamic]u32, w.allocator)
 	w.root = new(Archetype, w.allocator)
 	arch_init(w.root, nil, w.allocator)
@@ -177,10 +178,10 @@ world_spawn :: proc(w: ^World) -> Entity {
 	gen: u32
 	if len(w.free_list) > 0 {
 		id = pop(&w.free_list)
-		gen = w.entities[id].gen
+		gen = w.entities.gen[id]
 	} else {
 		id = u32(len(w.entities))
-		append(&w.entities, Entity_Meta{gen = 1})
+		append_soa(&w.entities, Entity_Meta{gen = 1})
 		gen = 1
 	}
 
@@ -189,16 +190,16 @@ world_spawn :: proc(w: ^World) -> Entity {
 		gen = u64(gen),
 	}
 	row := arch_add_entity(w.root, e)
-	w.entities[id].record = {w.root, row}
+	w.entities.record[id] = {w.root, row}
 
 	return e
 }
 
 world_despawn :: proc(w: ^World, entity: Entity) {
 	id := u32(entity.id)
-	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return
+	if int(id) >= len(w.entities) || w.entities.gen[id] != u32(entity.gen) do return
 
-	record := w.entities[id].record
+	record := w.entities.record[id]
 	arch := record.arch
 
 	// 1. Cleanup where this entity is the TARGET
@@ -239,18 +240,18 @@ world_despawn :: proc(w: ^World, entity: Entity) {
 
 	// If the swap-and-pop moved another entity, update its record in the world
 	if was_moved {
-		w.entities[moved_entity.id].record.row = record.row
+		w.entities.record[moved_entity.id].row = record.row
 	}
 
 	// Invalidate handle and recycle ID
-	w.entities[id].gen += 1
+	w.entities.gen[id] += 1
 	append(&w.free_list, id)
-	w.entities[id].record = {}
+	w.entities.record[id] = {}
 }
 
 world_is_alive :: proc(w: ^World, entity: Entity) -> bool {
 	id := u32(entity.id)
-	return int(id) < len(w.entities) && w.entities[id].gen == u32(entity.gen)
+	return int(id) < len(w.entities) && w.entities.gen[id] == u32(entity.gen)
 }
 
 world_add_system :: proc(w: ^World, sys: rawptr) {
@@ -270,6 +271,7 @@ world_remove_system :: proc(w: ^World, sys: rawptr) {
 world_clear_query_cache :: proc(w: ^World) {
 	sync.mutex_lock(&w.cache_mutex)
 	defer sync.mutex_unlock(&w.cache_mutex)
+	w.query_cache_epoch += 1
 	for _, iter in w.query_cache {
 		delete(cast([]^Archetype)iter, w.allocator)
 	}
@@ -329,17 +331,17 @@ _world_transition_type :: proc(
 	is_tag: bool,
 ) {
 	id := u32(entity.id)
-	meta := &w.entities[id]
-	if meta.gen != u32(entity.gen) do return
+	if w.entities.gen[id] != u32(entity.gen) do return
 
-	current := meta.record.arch
+	record := &w.entities.record[id]
+	current := record.arch
 
 	// Fast Presence Check
 	for t, i in current.types {
 		if t == tid {
 			if !is_tag && data != nil && size > 0 {
 				col := &current.columns[i]
-				mem.copy(&(([^]byte)(col.ptr))[meta.record.row * col.size], data, col.size)
+				mem.copy(&(([^]byte)(col.ptr))[record.row * col.size], data, col.size)
 			}
 			return
 		}
@@ -371,7 +373,7 @@ _world_transition_type :: proc(
 			src_col := current.columns[curr_col]
 			mem.copy(
 				&(([^]byte)(next_col.ptr))[new_row * next_col.size],
-				&(([^]byte)(src_col.ptr))[meta.record.row * src_col.size],
+				&(([^]byte)(src_col.ptr))[record.row * src_col.size],
 				src_col.size,
 			)
 			curr_col += 1
@@ -384,28 +386,28 @@ _world_transition_type :: proc(
 		}
 	}
 
-	moved_entity, was_moved := arch_remove_row(current, meta.record.row)
+	moved_entity, was_moved := arch_remove_row(current, record.row)
 	if was_moved {
-		w.entities[u32(moved_entity.id)].record.row = meta.record.row
+		w.entities.record[moved_entity.id].row = record.row
 	}
-	meta.record.arch = next
-	meta.record.row = new_row
+	record.arch = next
+	record.row = new_row
 	trigger_lifecycle(w, .OnAdd, tid, entity)
 }
 
 world_add_component :: proc(w: ^World, entity: Entity, component: $T) {
 	id := u32(entity.id)
-	meta := &w.entities[id]
-	if meta.gen != u32(entity.gen) do return
+	if w.entities.gen[id] != u32(entity.gen) do return
 
-	current := meta.record.arch
+	record := &w.entities.record[id]
+	current := record.arch
 	tid := typeid_of(T)
 
 	// Fast Presence Check: Linear search on small sorted types is faster than map hash
 	for t, i in current.types {
 		if t == tid {
 			col := &current.columns[i]
-			((^T)(&(([^]byte)(col.ptr))[meta.record.row * col.size]))^ = component
+			((^T)(&(([^]byte)(col.ptr))[record.row * col.size]))^ = component
 			return
 		}
 	}
@@ -430,7 +432,7 @@ world_add_component :: proc(w: ^World, entity: Entity, component: $T) {
 			src_col := current.columns[curr_col]
 			mem.copy(
 				&(([^]byte)(next_col.ptr))[new_row * next_col.size],
-				&(([^]byte)(src_col.ptr))[meta.record.row * src_col.size],
+				&(([^]byte)(src_col.ptr))[record.row * src_col.size],
 				src_col.size,
 			)
 			curr_col += 1
@@ -441,12 +443,12 @@ world_add_component :: proc(w: ^World, entity: Entity, component: $T) {
 		((^T)(&(([^]byte)(next_col.ptr))[new_row * next_col.size]))^ = component
 	}
 
-	moved_entity, was_moved := arch_remove_row(current, meta.record.row)
+	moved_entity, was_moved := arch_remove_row(current, record.row)
 	if was_moved {
-		w.entities[u32(moved_entity.id)].record.row = meta.record.row
+		w.entities.record[moved_entity.id].row = record.row
 	}
-	meta.record.arch = next
-	meta.record.row = new_row
+	record.arch = next
+	record.row = new_row
 	trigger_lifecycle(w, .OnAdd, tid, entity)
 }
 
@@ -490,10 +492,10 @@ world_add_component_bulk :: proc(w: ^World, entities: []Entity, component: $T) {
 
 	// Try to avoid full map grouping if all entities are already in the same archetype
 	// Just do a quick check on the first entity
-	first_arch := w.entities[u32(entities[0].id)].record.arch
+	first_arch := w.entities.record[u32(entities[0].id)].arch
 	all_same := true
 	for i := 1; i < len(entities); i += 1 {
-		if w.entities[u32(entities[i].id)].record.arch != first_arch {
+		if w.entities.record[u32(entities[i].id)].arch != first_arch {
 			all_same = false
 			break
 		}
@@ -510,9 +512,9 @@ world_add_component_bulk :: proc(w: ^World, entities: []Entity, component: $T) {
 
 	for e in entities {
 		id := u32(e.id)
-		if id >= u32(len(w.entities)) || w.entities[id].gen != u32(e.gen) do continue
+		if id >= u32(len(w.entities)) || w.entities.gen[id] != u32(e.gen) do continue
 
-		arch := w.entities[id].record.arch
+		arch := w.entities.record[id].arch
 		if arch not_in archetype_groups {
 			archetype_groups[arch] = make([dynamic]Entity, 0, 1024, context.temp_allocator)
 		}
@@ -542,7 +544,7 @@ _migrate_entities_bulk :: proc(
 	next := edge.add
 
 	for e in entities {
-		meta := &w.entities[e.id]
+		record := &w.entities.record[e.id]
 
 		new_row := arch_add_entity(next, e)
 
@@ -557,7 +559,7 @@ _migrate_entities_bulk :: proc(
 				src_col := current.columns[curr_col]
 				mem.copy(
 					&(([^]byte)(next_col.ptr))[new_row * next_col.size],
-					&(([^]byte)(src_col.ptr))[meta.record.row * src_col.size],
+					&(([^]byte)(src_col.ptr))[record.row * src_col.size],
 					src_col.size,
 				)
 				curr_col += 1
@@ -568,13 +570,13 @@ _migrate_entities_bulk :: proc(
 		}
 
 		// Remove from old archetype
-		moved_entity, was_moved := arch_remove_row(current, meta.record.row)
+		moved_entity, was_moved := arch_remove_row(current, record.row)
 		if was_moved {
-			w.entities[u32(moved_entity.id)].record.row = meta.record.row
+			w.entities.record[moved_entity.id].row = record.row
 		}
 
-		meta.record.arch = next
-		meta.record.row = new_row
+		record.arch = next
+		record.row = new_row
 		trigger_lifecycle(w, .OnAdd, tid, e)
 	}
 }
@@ -584,10 +586,10 @@ _migrate_entities_bulk :: proc(
 */
 world_remove_component :: proc(w: ^World, entity: Entity, tid: typeid) {
 	id := u32(entity.id)
-	meta := &w.entities[id]
-	if meta.gen != u32(entity.gen) do return
+	if w.entities.gen[id] != u32(entity.gen) do return
 
-	current := meta.record.arch
+	record := &w.entities.record[id]
+	current := record.arch
 	if tid not_in current.lookup do return
 
 	trigger_lifecycle(w, .OnRemove, tid, entity)
@@ -618,18 +620,18 @@ world_remove_component :: proc(w: ^World, entity: Entity, tid: typeid) {
 
 		mem.copy(
 			&(([^]byte)(dst_col.ptr))[new_row * dst_col.size],
-			&(([^]byte)(src_col.ptr))[meta.record.row * src_col.size],
+			&(([^]byte)(src_col.ptr))[record.row * src_col.size],
 			src_col.size,
 		)
 	}
 
-	moved_entity, was_moved := arch_remove_row(current, meta.record.row)
+	moved_entity, was_moved := arch_remove_row(current, record.row)
 	if was_moved {
-		w.entities[u32(moved_entity.id)].record.row = meta.record.row
+		w.entities.record[moved_entity.id].row = record.row
 	}
 
-	meta.record.arch = next
-	meta.record.row = new_row
+	record.arch = next
+	record.row = new_row
 }
 
 /*
@@ -637,9 +639,9 @@ world_remove_component :: proc(w: ^World, entity: Entity, tid: typeid) {
 */
 world_has_component :: proc(w: ^World, entity: Entity, tid: typeid) -> bool #no_bounds_check {
 	id := u32(entity.id)
-	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return false
+	if int(id) >= len(w.entities) || w.entities.gen[id] != u32(entity.gen) do return false
 
-	for col in w.entities[id].record.arch.columns {
+	for col in w.entities.record[id].arch.columns {
 		if col.type == tid do return true
 	}
 	return false
@@ -651,9 +653,9 @@ world_has_component :: proc(w: ^World, entity: Entity, tid: typeid) -> bool #no_
 */
 world_get_component :: proc(w: ^World, entity: Entity, $T: typeid) -> ^T #no_bounds_check {
 	id := u32(entity.id)
-	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return nil
+	if int(id) >= len(w.entities) || w.entities.gen[id] != u32(entity.gen) do return nil
 
-	record := w.entities[id].record
+	record := w.entities.record[id]
 	tid := typeid_of(T)
 
 	for &col in record.arch.columns {
@@ -672,9 +674,9 @@ world_get_component_by_id :: proc(
 	tid: typeid,
 ) -> rawptr #no_bounds_check {
 	id := u32(entity.id)
-	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return nil
+	if int(id) >= len(w.entities) || w.entities.gen[id] != u32(entity.gen) do return nil
 
-	record := w.entities[id].record
+	record := w.entities.record[id]
 
 	for &col in record.arch.columns {
 		if col.type == tid {
@@ -698,9 +700,9 @@ world_get_all_components :: proc(
 	ok: bool,
 ) {
 	id := u32(entity.id)
-	if int(id) >= len(w.entities) || w.entities[id].gen != u32(entity.gen) do return nil, false
+	if int(id) >= len(w.entities) || w.entities.gen[id] != u32(entity.gen) do return nil, false
 
-	record := w.entities[id].record
+	record := w.entities.record[id]
 	arch := record.arch
 
 	components = make([]any, len(arch.columns), allocator)
@@ -1008,6 +1010,81 @@ _query_internal :: proc(w: ^World, terms: []any) -> QueryIter {
 	sync.mutex_unlock(&w.cache_mutex)
 
 	return iter
+}
+
+query_by_lists_and_hash :: proc(
+	w: ^World,
+	h: u64,
+	include, exclude, any_list: []typeid,
+) -> QueryIter {
+	if len(include) == 0 && len(any_list) == 0 do return nil
+
+	// Check cache
+	sync.mutex_lock(&w.cache_mutex)
+	if cached, ok := w.query_cache[h]; ok {
+		sync.mutex_unlock(&w.cache_mutex)
+		return cached
+	}
+	sync.mutex_unlock(&w.cache_mutex)
+
+	// Cache miss: evaluate query
+	q: Query
+	q.world = w
+	q.include = make([dynamic]typeid, w.allocator)
+	q.exclude = make([dynamic]typeid, w.allocator)
+	q.any_ = make([dynamic]typeid, w.allocator)
+	defer query_destroy(&q)
+
+	for tid in include do append(&q.include, tid)
+	for tid in exclude do append(&q.exclude, tid)
+	for tid in any_list do append(&q.any_, tid)
+
+	results := make([dynamic]^Archetype, context.temp_allocator)
+
+	for _, arch in w.archetypes {
+		if query_matches(&q, arch) {
+			append(&results, arch)
+		}
+	}
+
+	sync.mutex_lock(&w.cache_mutex)
+	if cached, ok := w.query_cache[h]; ok {
+		sync.mutex_unlock(&w.cache_mutex)
+		return cached
+	}
+
+	// Store in cache (allocated using world allocator)
+	cached_iter := make([]^Archetype, len(results), w.allocator)
+	copy(cached_iter, results[:])
+	iter := cast(QueryIter)cached_iter
+	w.query_cache[h] = iter
+	sync.mutex_unlock(&w.cache_mutex)
+
+	return iter
+}
+
+query_by_lists :: proc(w: ^World, include, exclude, any_list: []typeid) -> QueryIter {
+	if len(include) == 0 && len(any_list) == 0 do return nil
+
+	// Sort lists for consistent hashing
+	inc := slice.clone(include, context.temp_allocator)
+	exc := slice.clone(exclude, context.temp_allocator)
+	anys := slice.clone(any_list, context.temp_allocator)
+
+	typeid_cmp :: proc(i, j: typeid) -> bool {
+		return transmute(uintptr)i < transmute(uintptr)j
+	}
+
+	if len(inc) > 1 do slice.sort_by(inc, typeid_cmp)
+	if len(exc) > 1 do slice.sort_by(exc, typeid_cmp)
+	if len(anys) > 1 do slice.sort_by(anys, typeid_cmp)
+
+	// Build key
+	h := hash.fnv64a(slice.to_bytes(inc))
+	if len(exc) > 0 do h = hash.fnv64a(slice.to_bytes(exc), h)
+	if len(anys) > 0 do h = hash.fnv64a(slice.to_bytes(anys), h)
+
+	return query_by_lists_and_hash(w, h, inc, exc, anys)
 }
 
 @(private)

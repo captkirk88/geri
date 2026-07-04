@@ -8,7 +8,8 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:nbio"
+import "core:sync"
+import "core:thread"
 
 System_Metadata :: struct {
 	system: ^sys.System,
@@ -18,29 +19,29 @@ System_Metadata :: struct {
 }
 
 Schedule :: struct {
-	systems:           [dynamic]System_Metadata,
+	systems:           #soa[dynamic]System_Metadata,
 	levels:            [dynamic][dynamic]int,
 	needs_compilation: bool,
+	parallel:          bool,
 }
 
-// Instantiates a new, uncompiled Schedule pointer, initializing the nbio event loop.
+// Instantiates a new, uncompiled Schedule pointer.
 schedule_new :: proc(thread_count := 4, allocator := context.allocator) -> ^Schedule {
 	sched := new(Schedule, allocator)
-	sched.systems = make([dynamic]System_Metadata, allocator)
+	sched.systems = make(#soa[dynamic]System_Metadata, allocator)
 	sched.levels = make([dynamic][dynamic]int, allocator)
 	sched.needs_compilation = true
-
-	nbio.acquire_thread_event_loop()
+	sched.parallel = false
 
 	return sched
 }
 
-// Destroys the Schedule instance, releasing nbio event loop, then freeing resources.
+// Destroys the Schedule instance, freeing resources.
 schedule_destroy :: proc(w: ^ecs.World, sched: ^Schedule) {
-	for meta in sched.systems {
-		sys.destroy_system(w, meta.system, w.allocator)
-		delete(meta.before)
-		delete(meta.after)
+	for i in 0 ..< len(sched.systems) {
+		sys.destroy_system(w, sched.systems.system[i], w.allocator)
+		delete(sched.systems.before[i])
+		delete(sched.systems.after[i])
 	}
 	delete(sched.systems)
 
@@ -48,8 +49,6 @@ schedule_destroy :: proc(w: ^ecs.World, sched: ^Schedule) {
 		delete(lvl)
 	}
 	delete(sched.levels)
-
-	nbio.release_thread_event_loop()
 
 	free(sched, w.allocator)
 }
@@ -79,7 +78,7 @@ schedule_add_system :: proc(
 		append(&meta.after, a)
 	}
 
-	append(&sched.systems, meta)
+	append_soa(&sched.systems, meta)
 	sched.needs_compilation = true
 }
 
@@ -105,7 +104,7 @@ schedule_add_system_raw :: proc(
 		append(&meta.after, a)
 	}
 
-	append(&sched.systems, meta)
+	append_soa(&sched.systems, meta)
 	sched.needs_compilation = true
 }
 
@@ -177,28 +176,28 @@ compile_schedule :: proc(sched: ^Schedule) {
 
 	// 1. Map system procedure pointer (rawptr) to system index in sched.systems
 	sys_map := make(map[rawptr]int, N, context.temp_allocator)
-	for s, idx in sched.systems {
-		sys_map[s.system.procedure] = idx
+	for i in 0 ..< N {
+		sys_map[sched.systems.system[i].procedure] = i
 	}
 
 	// 2. Add explicit before/after dependencies
-	for meta, idx in sched.systems {
-		for b in meta.before {
+	for i in 0 ..< N {
+		for b in sched.systems.before[i] {
 			if b_idx, ok := sys_map[b]; ok {
-				append(&adj[idx], b_idx)
+				append(&adj[i], b_idx)
 			}
 		}
-		for a in meta.after {
+		for a in sched.systems.after[i] {
 			if a_idx, ok := sys_map[a]; ok {
-				append(&adj[a_idx], idx)
+				append(&adj[a_idx], i)
 			}
 		}
 	}
 
 	// 3. Resolve resource conflict dependencies
 	res_accesses := make([][]typeid, N, context.temp_allocator)
-	for meta, idx in sched.systems {
-		res_accesses[idx] = get_system_resources(meta.system, context.temp_allocator)
+	for i in 0 ..< N {
+		res_accesses[i] = get_system_resources(sched.systems.system[i], context.temp_allocator)
 	}
 
 	for i in 0 ..< N {
@@ -270,7 +269,7 @@ compile_schedule :: proc(sched: ^Schedule) {
 	}
 
 	if visited_count < N {
-		fmt.eprintln("Error: Cycle detected in schedule system dependencies!")
+		log.error("cycle detected in schedule system dependencies!")
 	}
 
 	levels_count := max_level + 1
@@ -291,21 +290,19 @@ compile_schedule :: proc(sched: ^Schedule) {
 	sched.needs_compilation = false
 }
 
-Level_Context :: struct {
-	remaining: int,
-	done:      bool,
+System_Task_Data :: struct {
+	system: ^sys.System,
+	wg:     ^sync.Wait_Group,
 }
 
-system_task_callback :: proc(op: ^nbio.Operation, system: ^sys.System, ctx: ^Level_Context) {
-	sys.execute_system(system)
-	ctx.remaining -= 1
-	if ctx.remaining == 0 {
-		ctx.done = true
-	}
+system_task_proc :: proc(task: thread.Task) {
+	data := cast(^System_Task_Data)task.data
+	sys.execute_system(data.system)
+	sync.wait_group_done(data.wg)
 }
 
-// Runs all systems in the schedule, compiling if needed and running parallel systems on the nbio event loop.
-schedule_run :: proc(w: ^ecs.World, sched: ^Schedule, thread_count := 4) {
+// Runs all systems in the schedule, compiling if needed and running parallel systems on the thread pool if configured.
+schedule_run :: proc(w: ^ecs.World, sched: ^Schedule, pool: ^thread.Pool = nil) {
 	if sched.needs_compilation {
 		compile_schedule(sched)
 	}
@@ -321,36 +318,36 @@ schedule_run :: proc(w: ^ecs.World, sched: ^Schedule, thread_count := 4) {
 
 		for i in 0 ..< level_len {
 			sys_idx := level[i]
-			meta := sched.systems[sys_idx]
-			sys.build_system(w, meta.system)
+			sys.build_system(w, sched.systems.system[sys_idx])
 		}
 
 		if level_len == 1 {
 			sys_idx := level[0]
-			meta := sched.systems[sys_idx]
-			sys.execute_system(meta.system)
+			sys.execute_system(sched.systems.system[sys_idx])
 		} else {
-			level_ctx := Level_Context {
-				remaining = level_len,
-				done      = false,
-			}
+			if sched.parallel && pool != nil {
+				wg: sync.Wait_Group
+				sync.wait_group_add(&wg, level_len)
 
-			for i in 0 ..< level_len {
-				sys_idx := level[i]
-				meta := sched.systems[sys_idx]
-				nbio.next_tick_poly2(meta.system, &level_ctx, system_task_callback)
-			}
+				tasks := make([]System_Task_Data, level_len, context.temp_allocator)
+				for i in 0 ..< level_len {
+					sys_idx := level[i]
+					tasks[i] = System_Task_Data{sched.systems.system[sys_idx], &wg}
+					thread.pool_add_task(pool, context.temp_allocator, system_task_proc, &tasks[i])
+				}
 
-			err := nbio.run_until(&level_ctx.done)
-			if err != nil {
-				log.error(nbio.error_string(err))
+				sync.wait_group_wait(&wg)
+			} else {
+				for i in 0 ..< level_len {
+					sys_idx := level[i]
+					sys.execute_system(sched.systems.system[sys_idx])
+				}
 			}
 		}
 
 		for i in 0 ..< level_len {
 			sys_idx := level[i]
-			meta := sched.systems[sys_idx]
-			sys.flush_system(w, meta.system)
+			sys.flush_system(w, sched.systems.system[sys_idx])
 		}
 	}
 }
@@ -363,13 +360,13 @@ schedule_modify_system :: proc(
 	before: []rawptr = nil,
 	after: []rawptr = nil,
 ) -> bool {
-	for &meta in sched.systems {
-		if meta.system.procedure == procedure {
+	for i in 0 ..< len(sched.systems) {
+		if sched.systems.system[i].procedure == procedure {
 			for b in before {
-				append(&meta.before, b)
+				append(&sched.systems.before[i], b)
 			}
 			for a in after {
-				append(&meta.after, a)
+				append(&sched.systems.after[i], a)
 			}
 			sched.needs_compilation = true
 			return true
@@ -377,4 +374,3 @@ schedule_modify_system :: proc(
 	}
 	return false
 }
-

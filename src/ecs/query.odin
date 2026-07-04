@@ -1,10 +1,10 @@
 package ecs
 
+import "base:runtime"
 import "core:container/intrusive/list"
 import "core:hash"
 import "core:slice"
 import "core:sync"
-import "base:runtime"
 
 /*
     Terms - These encode complex query logic into typeids.
@@ -56,7 +56,7 @@ hash_filter_info :: proc(op: Filter_Op, types: []typeid, target: Entity, relatio
 world_resolve_term :: proc(w: ^World, term: Term) -> typeid {
 	sync.mutex_lock(&w.cache_mutex)
 	defer sync.mutex_unlock(&w.cache_mutex)
-	
+
 	types := term.types
 	if w.filter_registry == nil {
 		w.filter_registry = make(map[typeid]Filter_Info, 16, w.allocator)
@@ -79,9 +79,9 @@ world_resolve_term :: proc(w: ^World, term: Term) -> typeid {
 
 	id := transmute(typeid)id_val
 	w.filter_registry[id] = {
-		op = term.op,
-		types = slice.clone(types, w.allocator),
-		target = term.target,
+		op       = term.op,
+		types    = slice.clone(types, w.allocator),
+		target   = term.target,
 		relation = term.relation,
 	}
 	w.filter_dedup[h] = id
@@ -91,41 +91,52 @@ world_resolve_term :: proc(w: ^World, term: Term) -> typeid {
 @(private)
 // lifecycle events
 on_add :: proc(t: typeid) -> Term {
-	return { op = .OnAdd, types = slice.clone([]typeid{t}, context.temp_allocator) }
+	return {op = .OnAdd, types = slice.clone([]typeid{t}, context.temp_allocator)}
 }
 
 on_rm :: proc(t: typeid) -> Term {
-	return { op = .OnRemove, types = slice.clone([]typeid{t}, context.temp_allocator) }
+	return {op = .OnRemove, types = slice.clone([]typeid{t}, context.temp_allocator)}
 }
 on_remove :: on_rm
 
 // require ALL of these types
 and :: proc(types: ..typeid) -> Term {
-	return { op = .And, types = slice.clone(types, context.temp_allocator) }
+	return {op = .And, types = slice.clone(types, context.temp_allocator)}
 }
 
 all :: proc(types: ..typeid) -> Term {return and(..types)}
 
 // require SOME (at least one) of these types
 some :: proc(types: ..typeid) -> Term {
-	return { op = .Or, types = slice.clone(types, context.temp_allocator) }
+	return {op = .Or, types = slice.clone(types, context.temp_allocator)}
 }
 or :: some
 
 // require NONE of these types
 not :: proc(types: ..typeid) -> Term {
-	return { op = .Not, types = slice.clone(types, context.temp_allocator) }
+	return {op = .Not, types = slice.clone(types, context.temp_allocator)}
 }
 none :: not
 
 // creates a relationship term (Relation, Target)
 pair :: proc($Rel: typeid, target: Target) -> Term {
-	return { op = .Pair, target = target, relation = typeid_of(Rel) }
+	return {op = .Pair, target = target, relation = typeid_of(Rel)}
 }
 
 // creates a depth-ordered iteration filter based on a relation
 hierarchy :: proc($R: typeid) -> Term {
-	return { op = .Hierarchy, relation = typeid_of(R) }
+	return {op = .Hierarchy, relation = typeid_of(R)}
+}
+
+
+Query_State :: struct {
+	world:      ^World,
+	include:    [dynamic]typeid,
+	exclude:    [dynamic]typeid,
+	any_:       [dynamic]typeid,
+	hash:       u64,
+	cached_res: QueryIter,
+	epoch:      u32,
 }
 
 /*
@@ -135,7 +146,7 @@ Query :: struct {
 	world:   ^World,
 	include: [dynamic]typeid,
 	exclude: [dynamic]typeid,
-	any_:     [dynamic]typeid,
+	any_:    [dynamic]typeid,
 }
 
 query_init :: proc(w: ^World, terms: []any) -> Query {

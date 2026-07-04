@@ -6,6 +6,7 @@ import "base:runtime"
 import "core:math/linalg"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 import "core:testing"
 import "core:time"
 
@@ -210,21 +211,22 @@ draw_shader_system :: proc(
 	batch3d_res: params.Res(graphics.Batch3D),
 	render_ctx_res: params.Res(graphics.Render_Context),
 	frame_ctx_res: params.Res(graphics.Frame_Context),
+	window_ctx_res: params.Res(windowing.Window_Context),
 	shader_res: params.Res(Shader_Pass_Resource),
 ) {
 	ctx := render_ctx_res.ptr
 	fctx := frame_ctx_res.ptr
 	batch := batch3d_res.ptr
 	shader_data := shader_res.ptr
+	window_ctx := window_ctx_res.ptr
 
 	if ctx == nil || ctx.device == nil || fctx.encoder == nil || fctx.texture_view == nil do return
 	if batch == nil || shader_data == nil do return
+	if window_ctx == nil || window_ctx.window == nil do return
 
 	win_w, win_h: c.int = 800, 600
-	window_ctx := ecs.world_get_resource(world, windowing.Window_Context)
-	if window_ctx != nil && window_ctx.window != nil {
-		sdl3.GetWindowSize(window_ctx.window, &win_w, &win_h)
-	}
+
+	sdl3.GetWindowSize(window_ctx.window, &win_w, &win_h)
 	aspect := f32(win_w) / f32(win_h)
 
 	// 1. Update uniforms (time, intensity, aspect, padding)
@@ -331,10 +333,26 @@ cleanup_shader_system :: proc(
 
 main :: proc() {
 	args := os.args
+	record_gif := true
 	duration := 10 * time.Second
 	if len(args) > 1 {
-		if parsed, ok := gtime.parse_duration(args[1]); ok {
-			duration = parsed
+		for arg in args[1:] {
+			if strings.starts_with(arg, "--") {
+				arg := strings.trim_left(arg, "--")
+				switch arg {
+				case "no-record":
+					record_gif = false
+				case "help", "-":
+					log.info("Usage: test_shader [DURATION] [--no-record|--help]")
+					return
+				case:
+					log.warn("Unknown argument: %s", arg)
+				}
+			} else {
+				if parsed, ok := gtime.parse_duration(arg); ok {
+					duration = parsed
+				}
+			}
 		}
 	}
 
@@ -370,7 +388,9 @@ main :: proc() {
 	screenshot_time := duration / 2
 	frame_count := 0
 
-	graphics.screenshot_recording_begin(&application.world, "test_shader_animation.gif")
+	if record_gif {
+		graphics.screenshot_recording_begin(&application.world, "test_shader_animation.gif")
+	}
 
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
@@ -388,7 +408,7 @@ main :: proc() {
 		app.app_update(&application)
 
 		frame_count += 1
-		if frame_count == 120 {
+		if frame_count == 120 && record_gif {
 			graphics.screenshot_recording_end(&application.world)
 			log.info("Finished recording %d frames, shutting down.", frame_count)
 			ecs.emit(&application.world, app.App_Exit_Event{})

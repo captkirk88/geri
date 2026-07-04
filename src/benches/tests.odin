@@ -473,17 +473,12 @@ Sound :: struct {
 	volume: f32,
 }
 
-World_Ref :: struct {
-	world: ^ecs.World,
-}
-
 benchmark_app_schedules :: proc(t: ^testing.T) {
 	using app
 
 	// Define 7 systems
-	sys_physics :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
-		for arch in ecs.query(w, Position, Velocity) {
+	sys_physics :: proc(query: params.Query(struct { pos: Position, vel: Velocity })) {
+		for arch in params.query(query) {
 			pos := ecs.arch_get_field(arch, Position)
 			vel := ecs.arch_get_field(arch, Velocity)
 			for i in 0 ..< len(pos) {
@@ -494,9 +489,12 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_ai :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
-		for arch in ecs.query(w, Enemy, Position) {
+	sys_ai :: proc(commands: params.Commands, query: params.Query(struct {
+				enemy: Enemy,
+				pos:   Position,
+			})) {
+		w := query.world
+		for arch in params.query(query) {
 			enemy := ecs.arch_get_field(arch, Enemy)
 			pos := ecs.arch_get_field(arch, Position)
 			for i in 0 ..< len(pos) {
@@ -510,9 +508,8 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_collision :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
-		for arch in ecs.query(w, Position, Health) {
+	sys_collision :: proc(query: params.Query(struct { pos: Position, health: Health })) {
+		for arch in params.query(query) {
 			pos := ecs.arch_get_field(arch, Position)
 			health := ecs.arch_get_field(arch, Health)
 			for i in 0 ..< len(pos) {
@@ -523,9 +520,8 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_gameplay :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
-		for arch in ecs.query(w, Health) {
+	sys_gameplay :: proc(query: params.Query(Health)) {
+		for arch in params.query(query) {
 			health := ecs.arch_get_field(arch, Health)
 			for i in 0 ..< len(health) {
 				if health[i].hp > 0.0 && health[i].hp < health[i].max_hp {
@@ -535,9 +531,8 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_animation :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
-		for arch in ecs.query(w, Transform, Position) {
+	sys_animation :: proc(query: params.Query(struct { transform: Transform, pos: Position })) {
+		for arch in params.query(query) {
 			transform := ecs.arch_get_field(arch, Transform)
 			pos := ecs.arch_get_field(arch, Position)
 			for i in 0 ..< len(transform) {
@@ -548,9 +543,8 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_audio :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
-		for arch in ecs.query(w, Sound, Position, ecs.not(Transform)) {
+	sys_audio :: proc(query: params.Query(struct { sound: Sound, pos: Position, not_tf: params.Without(Transform) })) {
+		for arch in params.query(query) {
 			sound := ecs.arch_get_field(arch, Sound)
 			pos := ecs.arch_get_field(arch, Position)
 			for i in 0 ..< len(sound) {
@@ -560,10 +554,9 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_render :: proc(world_ref: params.Res(World_Ref)) {
-		w := world_ref.ptr.world
+	sys_render :: proc(query: params.Query(Transform)) {
 		draw_count := 0
-		for arch in ecs.query(w, Transform) {
+		for arch in params.query(query) {
 			transform := ecs.arch_get_field(arch, Transform)
 			draw_count += len(transform)
 		}
@@ -582,12 +575,6 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		) -> time.Benchmark_Error {
 			data := new(bench_data, allocator)
 			data.application = app_init(allocator = allocator)
-
-			// Add World_Ref resource
-			world_ref := World_Ref {
-				world = &data.application.world,
-			}
-			ecs.world_add_resource(&data.application.world, world_ref)
 
 			// Create entities
 			entities := make([]ecs.Entity, 100_000, allocator)

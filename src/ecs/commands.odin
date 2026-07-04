@@ -49,10 +49,10 @@ commands_spawn :: proc(c: ^Commands) -> EntityCommands {
 	w := c.world
 	if len(w.free_list) > 0 {
 		id = pop(&w.free_list)
-		gen = w.entities[id].gen
+		gen = w.entities.gen[id]
 	} else {
 		id = u32(len(w.entities))
-		append(&w.entities, Entity_Meta{gen = 1})
+		append_soa(&w.entities, Entity_Meta{gen = 1})
 		gen = 1
 	}
 
@@ -238,7 +238,7 @@ commands_flush :: proc(c: ^Commands) {
 			world_despawn(c.world, cmd.entity)
 		case .Spawn:
 			row := arch_add_entity(c.world.root, cmd.entity)
-			c.world.entities[cmd.entity.id].record = {c.world.root, row}
+			c.world.entities.record[cmd.entity.id] = {c.world.root, row}
 		}
 
 		if cmd.data != nil {

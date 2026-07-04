@@ -16,7 +16,7 @@ Res :: struct($T: typeid) {
 // Local buffer for emitting events of type T. Flushed automatically to the World after the system runs.
 EventWriter :: struct($T: typeid) {
 	_events: [dynamic]T,
-	events: ^[dynamic]T,
+	events:  ^[dynamic]T,
 }
 
 // Idiomatic Odin helper to write events to an Event_Writer.
@@ -27,7 +27,7 @@ write :: #force_inline proc(writer: EventWriter($T), event: T) {
 
 // Read events of type T emitted since the last system run. Backed by temporary memory valid for the current frame.
 EventReader :: struct($T: typeid) {
-	events: []T,
+	events:  []T,
 	_cursor: int,
 }
 
@@ -55,3 +55,42 @@ Single :: struct($T: typeid) {
 	_phantom: ^T,
 }
 
+@(private)
+None :: struct {}
+
+With :: struct($T: typeid) {
+	_phantom: ^T,
+}
+
+Without :: struct($T: typeid) {
+	_phantom: ^T,
+}
+
+Or :: struct($T1: typeid, $T2: typeid) {
+	_phantom: ^struct {
+		t1: ^T1,
+		t2: ^T2,
+	},
+}
+
+
+Query :: struct($T: typeid) {
+	world:    ^ecs.World,
+	state:    ^ecs.Query_State,
+	_phantom: ^T,
+}
+
+query :: proc(q: Query($T)) -> ecs.QueryIter {
+	if q.state.epoch == q.state.world.query_cache_epoch {
+		return q.state.cached_res
+	}
+	q.state.cached_res = ecs.query_by_lists_and_hash(
+		q.state.world,
+		q.state.hash,
+		q.state.include[:],
+		q.state.exclude[:],
+		q.state.any_[:],
+	)
+	q.state.epoch = q.state.world.query_cache_epoch
+	return q.state.cached_res
+}

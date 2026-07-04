@@ -4,8 +4,10 @@ import ecs ".."
 import events "../events"
 import "base:intrinsics"
 import "base:runtime"
-import "core:mem"
 import "core:fmt"
+import "core:hash"
+import "core:mem"
+import "core:slice"
 import "ecs:params"
 
 import "core:testing"
@@ -19,14 +21,14 @@ System_Param_Resolve :: struct {
 }
 
 System :: struct {
-	id:              u64,
-	procedure:       rawptr,
-	runner:          System_Runner,
-	params_type:     typeid,
-	params_data:     rawptr,
-	commands:        ecs.Commands,
-	resolved_params: [dynamic]System_Param_Resolve,
-	resolved:        bool,
+	id:                u64,
+	procedure:         rawptr,
+	runner:            System_Runner,
+	params_type:       typeid,
+	params_data:       rawptr,
+	commands:          ecs.Commands,
+	resolved_params:   [dynamic]System_Param_Resolve,
+	resolved:          bool,
 	// Active world during execution (set by build_system before each run)
 	world:             ^ecs.World,
 	// Captures a return value into an out-pointer; nil for void-returning systems
@@ -77,11 +79,10 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		match = proc(
 			info: ^runtime.Type_Info,
 		) -> bool {return reflect.match_struct_field(info, "_events", 2)},
-		
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			Dummy :: struct {
 				_events: runtime.Raw_Dynamic_Array,
-				events: ^runtime.Raw_Dynamic_Array,
+				events:  ^runtime.Raw_Dynamic_Array,
 			}
 			dummy := (^Dummy)(ptr)
 			if dummy._events.allocator.procedure == nil {
@@ -95,12 +96,12 @@ world_init_default_params :: proc(w: ^ecs.World) {
 				s := info.variant.(runtime.Type_Info_Struct)
 				ev_type := reflect.get_dynamic_array_elem_type(s, 0)
 				event_size := int(s.types[0].variant.(runtime.Type_Info_Dynamic_Array).elem.size)
-				
+
 				for i in 0 ..< dyn_array.len {
 					data_ptr := rawptr(uintptr(dyn_array.data) + uintptr(i * event_size))
 					events.trigger(&w.event_manager, w, ev_type, 0, data_ptr)
 				}
-				
+
 				dyn_array.len = 0
 			}
 		},
@@ -117,57 +118,59 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// Event_Reader system param: Connects a system to the World's event history.
 	// The builder isolates events emitted since the last time this specific system ran, copying them into a temporary slice.
 	// Since it only reads data into temp allocator, no after_run or destroy hook is necessary.
-	register_system_param_builder(w, {
-		match = proc(
-			info: ^runtime.Type_Info,
-		) -> bool {return reflect.match_struct_field(info, "events", 2)},
-		
-		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
-			s := info.variant.(runtime.Type_Info_Struct)
-			ev_type := reflect.get_slice_elem_type(s, 0)
+	register_system_param_builder(
+		w,
+		{
+			match = proc(
+				info: ^runtime.Type_Info,
+			) -> bool {return reflect.match_struct_field(info, "events", 2)},
+			build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+				s := info.variant.(runtime.Type_Info_Struct)
+				ev_type := reflect.get_slice_elem_type(s, 0)
 
-			cursor := (^int)(uintptr(ptr) + s.offsets[1])
-			if buf, ok := w.event_manager.history[ev_type]; ok {
-				total_events := buf.count
+				cursor := (^int)(uintptr(ptr) + s.offsets[1])
+				if buf, ok := w.event_manager.history[ev_type]; ok {
+					total_events := buf.count
 
-				// Handle case where events were cleared between runs
-				if cursor^ > total_events {
-					cursor^ = 0
-				}
+					// Handle case where events were cleared between runs
+					if cursor^ > total_events {
+						cursor^ = 0
+					}
 
-				count := total_events - cursor^
+					count := total_events - cursor^
 
-				if count > 0 {
-					// Copy history to temp_allocator to provide a stable slice for the system
-					if buf.event_size > 0 {
-						data_size := int(count * buf.event_size)
-						out_data := make([]u8, data_size, context.temp_allocator)
-						mem.copy(&out_data[0], &buf.data[cursor^ * buf.event_size], data_size)
+					if count > 0 {
+						// Copy history to temp_allocator to provide a stable slice for the system
+						if buf.event_size > 0 {
+							data_size := int(count * buf.event_size)
+							out_data := make([]u8, data_size, context.temp_allocator)
+							mem.copy(&out_data[0], &buf.data[cursor^ * buf.event_size], data_size)
 
-						slice := runtime.Raw_Slice {
-							data = &out_data[0],
-							len  = count,
+							slice := runtime.Raw_Slice {
+								data = &out_data[0],
+								len  = count,
+							}
+							reflect.assign_ptr_value(ptr, slice)
+						} else {
+							// For zero-sized events, just provide length
+							slice := runtime.Raw_Slice {
+								data = nil,
+								len  = count,
+							}
+							reflect.assign_ptr_value(ptr, slice)
 						}
-						reflect.assign_ptr_value(ptr, slice)
+						cursor^ = total_events
 					} else {
-						// For zero-sized events, just provide length
 						slice := runtime.Raw_Slice {
 							data = nil,
-							len  = count,
+							len  = 0,
 						}
 						reflect.assign_ptr_value(ptr, slice)
 					}
-					cursor^ = total_events
-				} else {
-					slice := runtime.Raw_Slice {
-						data = nil,
-						len  = 0,
-					}
-					reflect.assign_ptr_value(ptr, slice)
 				}
-			}
+			},
 		},
-	})
+	)
 
 	// Commands system param: Provides a deferred commands buffer to the system.
 	// Changes made via the buffer are automatically flushed into the World inside the after_run hook.
@@ -373,10 +376,116 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			val_ptr^ = found_ptr
 		},
 	})
+
+	// Query system param builder
+	register_system_param_builder(w, {
+		match = proc(info: ^runtime.Type_Info) -> bool {
+			named, ok := info.variant.(runtime.Type_Info_Named)
+			if !ok do return false
+			return len(named.name) >= 6 && named.name[:6] == "Query("
+		},
+		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			s := info.variant.(runtime.Type_Info_Struct)
+
+			((^^ecs.World)(ptr))^ = w
+			w.iteration_depth += 1
+
+			state_ptr := (^^ecs.Query_State)(uintptr(ptr) + s.offsets[1])
+			if state_ptr^ != nil do return
+
+			state_ptr^ = new(ecs.Query_State, w.allocator)
+			state := state_ptr^
+			state.world = w
+			state.include = make([dynamic]typeid, w.allocator)
+			state.exclude = make([dynamic]typeid, w.allocator)
+			state.any_ = make([dynamic]typeid, w.allocator)
+
+			phantom_ti := s.types[2]
+			phantom_ptr_info := phantom_ti.variant.(runtime.Type_Info_Pointer)
+			t_actual := phantom_ptr_info.elem
+
+			parse_term :: proc(ti: ^runtime.Type_Info, state: ^ecs.Query_State) {
+				named, ok := ti.variant.(runtime.Type_Info_Named)
+				if ok {
+					if len(named.name) >= 5 && named.name[:5] == "With(" {
+						s_ti := named.base.variant.(runtime.Type_Info_Struct)
+						ptr_ti := s_ti.types[0].variant.(runtime.Type_Info_Pointer)
+						tid := ptr_ti.elem.id
+						append(&state.include, tid)
+					} else if len(named.name) >= 8 && named.name[:8] == "Without(" {
+						s_ti := named.base.variant.(runtime.Type_Info_Struct)
+						ptr_ti := s_ti.types[0].variant.(runtime.Type_Info_Pointer)
+						tid := ptr_ti.elem.id
+						append(&state.exclude, tid)
+					} else if len(named.name) >= 3 && named.name[:3] == "Or(" {
+						s_ti := named.base.variant.(runtime.Type_Info_Struct)
+						ptr_ti := s_ti.types[0].variant.(runtime.Type_Info_Pointer)
+						sub_struct := ptr_ti.elem.variant.(runtime.Type_Info_Struct)
+
+						t1_ptr := sub_struct.types[0].variant.(runtime.Type_Info_Pointer)
+						append(&state.any_, t1_ptr.elem.id)
+
+						t2_ptr := sub_struct.types[1].variant.(runtime.Type_Info_Pointer)
+						append(&state.any_, t2_ptr.elem.id)
+					} else {
+						append(&state.include, ti.id)
+					}
+				} else {
+					append(&state.include, ti.id)
+				}
+			}
+
+			named, ok := t_actual.variant.(runtime.Type_Info_Named)
+			if ok {
+				parse_term(t_actual, state)
+			} else {
+				s_ti, is_struct := t_actual.variant.(runtime.Type_Info_Struct)
+				if is_struct {
+					for i in 0 ..< s_ti.field_count {
+						field_type := s_ti.types[i]
+						parse_term(field_type, state)
+					}
+				} else {
+					parse_term(t_actual, state)
+				}
+			}
+
+			typeid_cmp :: proc(i, j: typeid) -> bool {
+				return transmute(uintptr)i < transmute(uintptr)j
+			}
+
+			if len(state.include) > 1 do slice.sort_by(state.include[:], typeid_cmp)
+			if len(state.exclude) > 1 do slice.sort_by(state.exclude[:], typeid_cmp)
+			if len(state.any_) > 1 do slice.sort_by(state.any_[:], typeid_cmp)
+
+			state.hash = hash.fnv64a(slice.to_bytes(state.include[:]))
+			if len(state.exclude) > 0 do state.hash = hash.fnv64a(slice.to_bytes(state.exclude[:]), state.hash)
+			if len(state.any_) > 0 do state.hash = hash.fnv64a(slice.to_bytes(state.any_[:]), state.hash)
+		},
+		after_run = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			w.iteration_depth -= 1
+		},
+		destroy = proc(sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+			s := info.variant.(runtime.Type_Info_Struct)
+			state_ptr := (^^ecs.Query_State)(uintptr(ptr) + s.offsets[1])
+			if state_ptr^ != nil {
+				state := state_ptr^
+				delete(state.include)
+				delete(state.exclude)
+				delete(state.any_)
+				free(state, state.world.allocator)
+				state_ptr^ = nil
+			}
+		},
+	})
 }
 
 // Generic helper to register simple system params of a specific type
-register_system_param :: proc(w: ^ecs.World, $T: typeid, provider: proc(w: ^ecs.World, sys: ^System) -> T) {
+register_system_param :: proc(
+	w: ^ecs.World,
+	$T: typeid,
+	provider: proc(w: ^ecs.World, sys: ^System) -> T,
+) {
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
 			base := runtime.type_info_base(info)
@@ -549,40 +658,103 @@ new_system :: proc(
 				((^Return_Type)(out))^ = (cast(proc() -> Return_Type)(fn_ptr))()
 			case 1:
 				((^Return_Type)(out))^ = (cast(proc(_: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]))
+					val(args[0], params_info.types[0]),
+				)
 			case 2:
 				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]))
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+				)
 			case 3:
-				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
-					val(args[2], params_info.types[2]))
+				((^Return_Type)(out))^ = (cast(proc(
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+					) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]),
+				)
 			case 4:
-				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
-					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]))
+				((^Return_Type)(out))^ = (cast(proc(
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+					) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]),
+					val(args[3], params_info.types[3]),
+				)
 			case 5:
-				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
-					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
-					val(args[4], params_info.types[4]))
+				((^Return_Type)(out))^ = (cast(proc(
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+					) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]),
+					val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]),
+				)
 			case 6:
-				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
-					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
-					val(args[4], params_info.types[4]), val(args[5], params_info.types[5]))
+				((^Return_Type)(out))^ = (cast(proc(
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+					) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]),
+					val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]),
+					val(args[5], params_info.types[5]),
+				)
 			case 7:
-				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
-					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
-					val(args[4], params_info.types[4]), val(args[5], params_info.types[5]),
-					val(args[6], params_info.types[6]))
+				((^Return_Type)(out))^ = (cast(proc(
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+					) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]),
+					val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]),
+					val(args[5], params_info.types[5]),
+					val(args[6], params_info.types[6]),
+				)
 			case 8:
-				((^Return_Type)(out))^ = (cast(proc(_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr) -> Return_Type)(fn_ptr))(
-					val(args[0], params_info.types[0]), val(args[1], params_info.types[1]),
-					val(args[2], params_info.types[2]), val(args[3], params_info.types[3]),
-					val(args[4], params_info.types[4]), val(args[5], params_info.types[5]),
-					val(args[6], params_info.types[6]), val(args[7], params_info.types[7]))
+				((^Return_Type)(out))^ = (cast(proc(
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+						_: rawptr,
+					) -> Return_Type)(fn_ptr))(
+					val(args[0], params_info.types[0]),
+					val(args[1], params_info.types[1]),
+					val(args[2], params_info.types[2]),
+					val(args[3], params_info.types[3]),
+					val(args[4], params_info.types[4]),
+					val(args[5], params_info.types[5]),
+					val(args[6], params_info.types[6]),
+					val(args[7], params_info.types[7]),
+				)
 			}
 		}
 	}
@@ -606,9 +778,9 @@ new_system :: proc(
 @(private)
 resolve_system_params :: proc(w: ^ecs.World, system: ^System) {
 	if system.resolved do return
-	
+
 	system.resolved_params = make([dynamic]System_Param_Resolve, w.allocator)
-	
+
 	if system.params_type == nil {
 		system.resolved = true
 		return
@@ -625,22 +797,25 @@ resolve_system_params :: proc(w: ^ecs.World, system: ^System) {
 	for i in 0 ..< len(params_info.types) {
 		field_info := params_info.types[i]
 		offset = mem.align_forward_uintptr(offset, uintptr(field_info.align))
-		
+
 		base_info := runtime.type_info_base(field_info)
 
 		for builder in w.param_builders {
 			if builder.match(field_info) {
-				append(&system.resolved_params, System_Param_Resolve{
-					builder = builder,
-					base_info = base_info,
-					offset = offset,
-				})
+				append(
+					&system.resolved_params,
+					System_Param_Resolve {
+						builder = builder,
+						base_info = base_info,
+						offset = offset,
+					},
+				)
 				break
 			}
 		}
 		offset += uintptr(field_info.size)
 	}
-	
+
 	system.resolved = true
 }
 
@@ -693,7 +868,7 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 
 // Instantiates and maps system parameters (resource pointers, command buffers, event readers/writers) from the world.
 build_system :: proc(w: ^ecs.World, system: ^System) {
-	system.world = w  // always expose world for composite runners
+	system.world = w // always expose world for composite runners
 	if system.params_data == nil do return
 
 	if !system.resolved {
@@ -799,29 +974,31 @@ Pipe_Data :: struct {
 */
 run_if :: proc(
 	condition: $C,
-	target:    $T,
+	target: $T,
 	allocator := context.allocator,
 ) -> ^System where intrinsics.type_is_proc(C),
 	intrinsics.type_is_proc(T),
-	intrinsics.type_proc_return_count(C) == 1,
-	intrinsics.type_proc_return_type(C, 0) == bool {
+	intrinsics.type_proc_return_count(C) ==
+	1,
+	intrinsics.type_proc_return_type(C, 0) ==
+	bool {
 
-	cond_sys   := new_system(condition, allocator)
+	cond_sys := new_system(condition, allocator)
 	target_sys := new_system(target, allocator)
 
 	data := new(Run_If_Data, allocator)
 	data.condition = cond_sys
-	data.target    = target_sys
+	data.target = target_sys
 
 	wrapper := new(System, allocator)
 	wrapper.params_data = data
-	wrapper.resolved    = true // suppress default param resolution
+	wrapper.resolved = true // suppress default param resolution
 	wrapper.resolved_params = make([dynamic]System_Param_Resolve, allocator)
 
 	wrapper.composite_destroy = proc(data: rawptr, allocator: mem.Allocator) {
 		d := (^Run_If_Data)(data)
 		destroy_system(d.condition.world, d.condition, allocator)
-		destroy_system(d.target.world,    d.target,    allocator)
+		destroy_system(d.target.world, d.target, allocator)
 		free(d, allocator)
 	}
 
@@ -868,7 +1045,8 @@ pipe :: proc(
 	allocator := context.allocator,
 ) -> ^System where intrinsics.type_is_proc(S),
 	intrinsics.type_is_proc(T),
-	intrinsics.type_proc_return_count(S) == 1 {
+	intrinsics.type_proc_return_count(S) ==
+	1 {
 
 	source_sys := new_system(source, allocator)
 	target_sys := new_system(target, allocator)
@@ -879,7 +1057,7 @@ pipe :: proc(
 
 	wrapper := new(System, allocator)
 	wrapper.params_data = data
-	wrapper.resolved    = true
+	wrapper.resolved = true
 	wrapper.resolved_params = make([dynamic]System_Param_Resolve, allocator)
 
 	wrapper.composite_destroy = proc(data: rawptr, allocator: mem.Allocator) {
@@ -905,9 +1083,9 @@ pipe :: proc(
 		flush_system(w, comp.source)
 
 		// Inject return value as pipe input to target
-		comp.target.pipe_in        = &comp.return_buf[0]
+		comp.target.pipe_in = &comp.return_buf[0]
 		comp.target.pipe_in_typeid = comp.source.return_typeid
-		comp.target.pipe_in_size   = comp.source.return_size
+		comp.target.pipe_in_size = comp.source.return_size
 
 		build_system(w, comp.target)
 		execute_system(comp.target)
@@ -927,8 +1105,12 @@ test_run_if :: proc(t: ^testing.T) {
 	defer ecs.world_destroy(&w)
 	world_init_default_params(&w)
 
-	Flag :: struct { enabled: bool }
-	Counter :: struct { n: int }
+	Flag :: struct {
+		enabled: bool,
+	}
+	Counter :: struct {
+		n: int,
+	}
 	ecs.world_add_resource(&w, Flag{true})
 	ecs.world_add_resource(&w, Counter{0})
 
@@ -956,11 +1138,13 @@ test_pipe :: proc(t: ^testing.T) {
 	defer ecs.world_destroy(&w)
 	world_init_default_params(&w)
 
-	Result :: struct { value: int }
+	Result :: struct {
+		value: int,
+	}
 	ecs.world_add_resource(&w, Result{0})
 
-	source_proc := proc() -> int { return 42 }
-	target_proc  := proc(in_val: params.In(int), res: params.Res(Result)) {
+	source_proc := proc() -> int {return 42}
+	target_proc := proc(in_val: params.In(int), res: params.Res(Result)) {
 		res.ptr.value = in_val.value
 	}
 
@@ -977,11 +1161,13 @@ test_new_params_added_removed_single :: proc(t: ^testing.T) {
 	defer ecs.world_destroy(&w)
 	world_init_default_params(&w)
 
-	TestComponent :: struct { x: int }
+	TestComponent :: struct {
+		x: int,
+	}
 	Config :: struct {
-		added_count: int,
+		added_count:   int,
 		removed_count: int,
-		single_val: int,
+		single_val:    int,
 	}
 	ecs.world_add_resource(&w, Config{})
 
@@ -1020,9 +1206,7 @@ test_new_params_added_removed_single :: proc(t: ^testing.T) {
 
 	run_system(&w, sys)
 
-	testing.expect_value(t, conf.added_count, 1)   // e2 was added
+	testing.expect_value(t, conf.added_count, 1) // e2 was added
 	testing.expect_value(t, conf.removed_count, 1) // e1 was removed
 	testing.expect_value(t, conf.single_val, 100)
 }
-
-
