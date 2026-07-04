@@ -1,9 +1,9 @@
 package camera
 
-import "core:math/linalg"
-import transform "../transform"
 import "../ecs"
 import params "../ecs/params"
+import transform "../transform"
+import "core:math/linalg"
 
 Camera :: struct {
 	target:     [3]f32,
@@ -41,10 +41,7 @@ project_point :: proc(c: Camera, t: transform.Transform, point: [3]f32) -> [3]f3
 	return res4.xyz
 }
 
-auto_transform_system :: proc(
-	commands: params.Commands,
-	added_cameras: params.OnAdded(Camera),
-) {
+auto_transform_system :: proc(commands: params.Commands, added_cameras: params.OnAdded(Camera)) {
 	for entity in added_cameras.entities {
 		if !ecs.world_has_component(commands.ptr.world, entity, transform.Transform) {
 			t: transform.Transform

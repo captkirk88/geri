@@ -42,15 +42,18 @@ Log_Format :: struct {
 	options:         log.Options,
 }
 
+@(private)
+DEFAULT_TEMPLATE :: "[c=yellow][time][/c][c=gray]([location])[/c] [level]: [message]"
+
 DEFAULT_CONSOLE_FORMAT :: Log_Format {
-	template     = "[time][location][level][message]",
+	template     = DEFAULT_TEMPLATE,
 	enable_color = true,
-	time_format  = .Long,
+	time_format  = .Short,
 	options      = log.Default_Console_Logger_Opts,
 }
 
 DEFAULT_FILE_FORMAT :: Log_Format {
-	template     = "[[time]][[location]][[level]]: [message]",
+	template     = DEFAULT_TEMPLATE,
 	enable_color = false,
 	time_format  = .Long,
 	options      = log.Default_File_Logger_Opts,
@@ -652,7 +655,7 @@ init_log :: proc "contextless" () {
 	}
 
 	log_outputs = make([dynamic]Log_Output, runtime.default_allocator())
-	append(&log_outputs, create_console_output(.Info, DEFAULT_CONSOLE_FORMAT))
+	append(&log_outputs, create_console_output(.Debug, DEFAULT_CONSOLE_FORMAT))
 }
 
 @(fini)

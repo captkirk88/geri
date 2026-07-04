@@ -3,7 +3,10 @@ package main
 import camera "../src/camera"
 import transform "../src/transform"
 import "core:math/linalg"
+import "core:os"
+import "core:strconv"
 import "core:testing"
+import "core:time"
 
 import "../src/app"
 import "../src/ecs"
@@ -30,6 +33,10 @@ Circle :: struct {
 }
 
 Position2D :: struct {
+	x, y: f32,
+}
+
+Velocity2D :: struct {
 	x, y: f32,
 }
 
@@ -107,10 +114,14 @@ setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing
 		g := math.cos(hue + math.PI * 2.0 / 3.0) * 0.5 + 0.5
 		b := math.cos(hue + math.PI * 4.0 / 3.0) * 0.5 + 0.5
 
+		vx := rand.float32_range(-150, 150)
+		vy := rand.float32_range(-150, 150)
+
 		ec := ecs.commands_spawn(commands.ptr)
 		ecs.entity_commands_add_components(
 			ec,
 			Position2D{x = fx, y = fy},
+			Velocity2D{x = vx, y = vy},
 			Circle{radius = 15.0, color = {r, g, b, 1.0}},
 		)
 	}
@@ -213,7 +224,91 @@ draw_circles_system :: proc(
 	}
 }
 
+movement_system :: proc(world: ^ecs.World, window_res: params.Res(windowing.Window_Context)) {
+	if world == nil || window_res.ptr == nil do return
+
+	win_w, win_h: c.int
+	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+	half_w := f32(win_w) / 2
+	half_h := f32(win_h) / 2
+
+	@(static) prev_tick: time.Tick
+	@(static) initialized: bool
+	if !initialized {
+		prev_tick = time.tick_now()
+		initialized = true
+	}
+
+	now := time.tick_now()
+	dt := f32(time.duration_seconds(time.tick_diff(prev_tick, now)))
+	prev_tick = now
+
+	// Clamp dt to avoid huge steps
+	if dt <= 0.0 || dt > 0.1 {
+		dt = 1.0 / 60.0
+	}
+
+	for arch in ecs.query(world, Position2D, Velocity2D) {
+		positions := ecs.arch_get_field(arch, Position2D)
+		velocities := ecs.arch_get_field(arch, Velocity2D)
+
+		for i in 0 ..< len(positions) {
+			pos := &positions[i]
+			vel := &velocities[i]
+
+			pos.x += vel.x * dt
+			pos.y += vel.y * dt
+
+			// Bounce off screen boundaries, accounting for radius (15.0)
+			radius: f32 = 15.0
+
+			if pos.x - radius < -half_w {
+				pos.x = -half_w + radius
+				vel.x = -vel.x
+			} else if pos.x + radius > half_w {
+				pos.x = half_w - radius
+				vel.x = -vel.x
+			}
+
+			if pos.y - radius < -half_h {
+				pos.y = -half_h + radius
+				vel.y = -vel.y
+			} else if pos.y + radius > half_h {
+				pos.y = half_h - radius
+				vel.y = -vel.y
+			}
+		}
+	}
+}
+
+parse_duration :: proc(s: string) -> (time.Duration, bool) {
+	if len(s) < 2 do return 0, false
+
+	suffix := s[len(s) - 1]
+	num_part := s[:len(s) - 1]
+
+	val, ok := strconv.parse_f64(num_part)
+	if !ok do return 0, false
+
+	switch suffix {
+	case 's':
+		return time.Duration(val * f64(time.Second)), true
+	case 'm':
+		return time.Duration(val * f64(time.Minute)), true
+	case:
+		return 0, false
+	}
+}
+
 main :: proc() {
+	args := os.args
+	duration := 10 * time.Second
+	if len(args) > 1 {
+		if parsed, ok := parse_duration(args[1]); ok {
+			duration = parsed
+		}
+	}
+
 	application := app.app_init(
 		[]app.Plugin{windowing.Window_Plugin(), graphics.Render_Plugin(), fps.Fps_Plugin()},
 	)
@@ -246,6 +341,7 @@ main :: proc() {
 
 	// Register systems
 	app.app_add_system(&application, app.Startup, setup_system)
+	app.app_add_system(&application, app.Update, movement_system)
 	app.app_add_system(
 		&application,
 		app.Render,
@@ -255,16 +351,22 @@ main :: proc() {
 
 	app.app_run_schedule(&application, app.Startup)
 
-	frame_count := 0
-	max_frame_count := 100
+	start_time := time.tick_now()
+	screenshot_taken := false
+	screenshot_time := duration / 2
+
 	for !application.should_exit {
-		if frame_count == max_frame_count / 2 {
+		elapsed := time.tick_since(start_time)
+
+		if !screenshot_taken && elapsed >= screenshot_time {
 			graphics.capture_screenshot(&application.world, "test_render_screenshot.png", .PNG)
+			screenshot_taken = true
 		}
-		if frame_count == max_frame_count {
+
+		if elapsed >= duration {
 			application.should_exit = true
 		}
+
 		app.app_update(&application)
-		frame_count += 1
 	}
 }

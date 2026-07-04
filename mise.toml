@@ -3,12 +3,13 @@ BUILD_OUTPUT_DIR = "build/{{os()}}/"
 
 vet = "-vet-style"
 target = ""
+optimize = "aggressive"
 collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs -collection:transform=src/transform -collection:camera=src/camera -collection:fps=src/fps"
-build_lib_win = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
-build_lib_other = "-build-mode:dll -o:speed -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
-build_exe_win = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
-build_exe_other = "-o:speed -out:{{vars.BUILD_OUTPUT_DIR}}try"
-test = "-all-packages -o:speed -define:ODIN_TEST_THREADS=1 "  # -define:ODIN_TEST_FANCY=false"
+build_lib_win = "-build-mode:dll -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
+build_lib_other = "-build-mode:dll -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
+build_exe_win = "-o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
+build_exe_other = "-o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}try"
+test = "-all-packages -o:{{vars.optimize}} -define:ODIN_TEST_THREADS=1 "  # -define:ODIN_TEST_FANCY=false"
 
 [tasks.test]
 quiet = true
@@ -26,7 +27,7 @@ depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
   { task = "update_deps" },
-  "odin run test_render {{vars.vet}} {{vars.target}} -o:speed {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe",
+  "odin run test_render {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe -- 10s",
 ]
 
 [tasks.bench]
