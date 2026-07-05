@@ -14,10 +14,10 @@ build/
 *.exe
 *.pdb
 *.bin
-!*test_*.png
 
 # strudel designs
 *.strudel
 
 # images
 test_*.png
+!test_ui_screenshot.png
