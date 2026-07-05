@@ -2,13 +2,13 @@ package systems
 
 import ecs ".."
 import events "../events"
+import params "../params"
 import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:hash"
 import "core:mem"
 import "core:slice"
-import "ecs:params"
 
 import "core:testing"
 
