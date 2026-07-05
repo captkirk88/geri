@@ -7,7 +7,7 @@ import "core:strconv"
 import "core:strings"
 import stbtt "vendor:stb/truetype"
 
-import bbcode "logging:bbcode"
+import bbcode "../logging/bbcode"
 
 Text_Span :: struct {
 	text:          string,

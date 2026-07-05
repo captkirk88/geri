@@ -1,6 +1,9 @@
 # Ignore the vendor directory
 vendor/
 
+# Ignore the ols lsp config
+ols.json
+
 # Ignore all markdown files except README.md and BENCHMARKS.md
 *.md
 !README.md

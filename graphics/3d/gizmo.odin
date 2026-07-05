@@ -3,14 +3,14 @@ package threeD
 import g ".."
 import "../../app"
 import "../../camera"
-import "../../ecs"
+import ecs "../../ecs"
 import params "../../ecs/params"
+import "../../ecs/systems"
 import "../../transform"
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
-import "ecs:systems"
 import "vendor:wgpu"
 
 // Gizmo3D is a component that visualizes the local orientation axes of an entity in 3D.

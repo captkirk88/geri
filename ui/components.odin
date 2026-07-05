@@ -75,11 +75,68 @@ Grid_Item :: struct {
 	row_span:     int,
 }
 
+grid_item_all :: proc() -> Grid_Item {
+	return Grid_Item{column_start = 0, column_span = 1, row_start = 0, row_span = 1}
+}
+
+grid_item_col_span :: proc(col_span: int) -> Grid_Item {
+	return Grid_Item{column_start = 0, column_span = col_span, row_start = 0, row_span = 1}
+}
+
+grid_item_row_span :: proc(row_span: int) -> Grid_Item {
+	return Grid_Item{column_start = 0, column_span = 1, row_start = 0, row_span = row_span}
+}
+
+grid_item_col_start :: proc(col_start: int) -> Grid_Item {
+	return Grid_Item{column_start = col_start, column_span = 1, row_start = 0, row_span = 1}
+}
+
+grid_item_row_start :: proc(row_start: int) -> Grid_Item {
+	return Grid_Item{column_start = 0, column_span = 1, row_start = row_start, row_span = 1}
+}
+
+
 Layout_Anchor :: struct {
 	anchor_min: [2]f32, // {left, top} relative to parent content bounds [0.0 - 1.0]
 	anchor_max: [2]f32, // {right, bottom} relative to parent content bounds [0.0 - 1.0]
 	offset_min: [2]f32, // {left, top} in pixels from anchor_min
 	offset_max: [2]f32, // {right, bottom} in pixels from anchor_max
+}
+
+anchor_topleft :: proc() -> Layout_Anchor {
+	return Layout_Anchor {
+		anchor_min = {0, 0},
+		anchor_max = {0, 0},
+		offset_min = {0, 0},
+		offset_max = {0, 0},
+	}
+}
+
+anchor_topright :: proc() -> Layout_Anchor {
+	return Layout_Anchor {
+		anchor_min = {1, 0},
+		anchor_max = {1, 0},
+		offset_min = {0, 0},
+		offset_max = {0, 0},
+	}
+}
+
+anchor_bottomleft :: proc() -> Layout_Anchor {
+	return Layout_Anchor {
+		anchor_min = {0, 1},
+		anchor_max = {0, 1},
+		offset_min = {0, 0},
+		offset_max = {0, 0},
+	}
+}
+
+anchor_bottomright :: proc() -> Layout_Anchor {
+	return Layout_Anchor {
+		anchor_min = {1, 1},
+		anchor_max = {1, 1},
+		offset_min = {0, 0},
+		offset_max = {0, 0},
+	}
 }
 
 UI_State :: struct {

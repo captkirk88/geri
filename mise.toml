@@ -1,14 +1,11 @@
 [vars]
 BUILD_OUTPUT_DIR = "build/{{os()}}/"
-
 vet = "-vet-style"
 target = ""
 optimize = "aggressive"
 collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs -collection:transform=src/transform -collection:camera=src/camera -collection:fps=src/fps -collection:input=src/input -collection:ui=src/ui"
 build_lib_win = "-build-mode:dll -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
 build_lib_other = "-build-mode:dll -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
-build_exe_win = "-o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
-build_exe_other = "-o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}try"
 test = "-all-packages -o:{{vars.optimize}} -define:ODIN_TEST_THREADS=1 "  # -define:ODIN_TEST_FANCY=false"
 
 [tasks.test]
@@ -16,40 +13,35 @@ quiet = true
 depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  { task = "update_deps" },
-  "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_runner.exe",
+  "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} -out:{{vars.BUILD_OUTPUT_DIR}}test_runner.exe",
 ]
 
 [tasks.test-ui]
 description = "Run the UI and Input layout showcase on the main thread"
 interactive = true
-depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
+depends = ["build-odin", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  { task = "update_deps" },
-  "odin run test_ui {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui.exe -- 10s",
+  "odin run test_ui {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui.exe -- 10s",
 ]
 
 [tasks.test-render]
 description = "Run the graphics render pipeline test on the main thread"
 interactive = true
-depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
+depends = ["build-odin", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  { task = "update_deps" },
-  "odin run test_render {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe -- 10s",
+  "odin run test_render {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe -- 10s",
 ]
 
 [tasks.test-shader]
 description = "Run the graphics shader pass and compute pipeline test on the main thread"
 interactive = true
-depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
+depends = ["build-odin", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  { task = "update_deps" },
-  "odin run test_shader {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_shader.exe -- 10s",
+  "odin run test_shader {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_shader.exe -- 10s",
 ]
-
 
 [tasks.bench]
 interactive = true
@@ -58,32 +50,20 @@ env = { BENCH_FORMAT = "{{ env.BENCH_FORMAT | default(value='markdown;graph') }}
 depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  { task = "update_deps" },
-  "odin test src/benches {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
+  "odin test src/benches {{vars.vet}} {{vars.target}} {{vars.test}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
 ]
 
 [tasks.build]
 quiet = true
 run = [
   { task = "make_build" },
-  { task = "update_deps" },
   { task = "copy_vendor_libs" },
-  "odin build src {{vars.vet}} {{vars.target}} {{vars.build_lib_other}} {{vars.collections}}",
+  "odin build . {{vars.vet}} {{vars.target}} {{vars.build_lib_other}}",
 ]
 run_windows = [
   { task = "make_build" },
-  { task = "update_deps" },
   { task = "copy_vendor_libs" },
-  "odin build src {{vars.vet}} {{vars.target}} {{vars.build_lib_win}} {{vars.collections}}",
-]
-
-[tasks.debug]
-interactive = true
-depends = ["build-odin", "install-odpkg"]
-run = [
-  { task = "make_build" },
-  { task = "update_deps" },
-  "odin run run.odin -file {{vars.vet}} {{vars.target}} -debug {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}debug.exe",
+  "odin build . {{vars.vet}} {{vars.target}} {{vars.build_lib_win}}",
 ]
 
 [tasks.clean]
