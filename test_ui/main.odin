@@ -189,7 +189,7 @@ setup_system :: proc(commands: params.Commands) {
 	ecs.commands_add_relation(commands.ptr, pinch_box.entity, ecs.ChildOf, anchor_panel.entity)
 
 	// Add showcase state resource
-	ecs.commands_add_resource_no_destroy(
+	ecs.commands_add_resource(
 		commands.ptr,
 		Showcase_State{start_time = time.tick_now(), grid_despawned = false, verified = false},
 	)
