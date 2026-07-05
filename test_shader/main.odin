@@ -336,7 +336,7 @@ draw_shader_system :: proc(
 	graphics.batch3d_set_active_pass(batch, render_pass_idx)
 
 	color := wgpu.Color{0.05, 0.08, 0.12, 1.0}
-	render_pass := graphics.begin_render_pass(frame_ctx, .Load, color)
+	render_pass := graphics.begin_frame_render_pass(frame_ctx, .Load, color)
 	defer graphics.end_render_pass(render_pass)
 
 
