@@ -23,21 +23,21 @@ Command :: struct {
 }
 
 Commands :: struct {
-	world:  ^World,
+	_world: ^World,
 	buffer: [dynamic]Command,
 }
 
 commands_init :: proc(w: ^World, allocator := context.allocator) -> Commands {
-	return Commands{world = w, buffer = make([dynamic]Command, allocator)}
+	return Commands{_world = w, buffer = make([dynamic]Command, allocator)}
 }
 
 commands_destroy :: proc(c: ^Commands) {
 	for cmd in c.buffer {
 		if cmd.data != nil {
 			if cmd.destructor != nil {
-				cmd.destructor(cmd.data, c.world.allocator)
+				cmd.destructor(cmd.data, c._world.allocator)
 			}
-			free(cmd.data, c.world.allocator)
+			free(cmd.data, c._world.allocator)
 		}
 	}
 	delete(c.buffer)
@@ -46,7 +46,7 @@ commands_destroy :: proc(c: ^Commands) {
 commands_spawn :: proc(c: ^Commands) -> EntityCommands {
 	id: u32
 	gen: u32
-	w := c.world
+	w := c._world
 	if len(w.free_list) > 0 {
 		id = pop(&w.free_list)
 		gen = w.entities.gen[id]
@@ -67,7 +67,7 @@ commands_spawn :: proc(c: ^Commands) -> EntityCommands {
 }
 
 commands_add_component :: proc(c: ^Commands, entity: Entity, component: $T) {
-	data, _ := mem.alloc(size_of(T), mem.DEFAULT_ALIGNMENT, c.world.allocator)
+	data, _ := mem.alloc(size_of(T), mem.DEFAULT_ALIGNMENT, c._world.allocator)
 	val_ptr := (^T)(data)
 	val_ptr^ = component
 
@@ -93,7 +93,7 @@ commands_add_components :: proc(c: ^Commands, entity: Entity, components: ..any)
 		if comp.data == nil do continue
 		ti := type_info_of(comp.id)
 
-		data, _ := mem.alloc(ti.size, ti.align, c.world.allocator)
+		data, _ := mem.alloc(ti.size, ti.align, c._world.allocator)
 		mem.copy(data, comp.data, ti.size)
 
 		adder := proc(w: ^World, e: Entity, tid: typeid, data: rawptr) {
@@ -128,7 +128,7 @@ commands_remove_component :: proc(c: ^Commands, entity: Entity, $T: typeid) {
 
 commands_add_relation :: proc(c: ^Commands, entity: Entity, $Rel: typeid, target: Entity) {
 	term := pair(Rel, target)
-	tid := world_resolve_term(c.world, term)
+	tid := world_resolve_term(c._world, term)
 
 	adder := proc(w: ^World, e: Entity, tid: typeid, data: rawptr) {
 		target_ptr := (^Entity)(data)
@@ -145,7 +145,7 @@ commands_add_relation :: proc(c: ^Commands, entity: Entity, $Rel: typeid, target
 		append(&w.target_index[target], Relation_Link{e, tid})
 	}
 
-	target_data, _ := mem.alloc(size_of(Entity), mem.DEFAULT_ALIGNMENT, c.world.allocator)
+	target_data, _ := mem.alloc(size_of(Entity), mem.DEFAULT_ALIGNMENT, c._world.allocator)
 	val_ptr := (^Entity)(target_data)
 	val_ptr^ = target
 
@@ -168,7 +168,7 @@ commands_add_system :: proc(
 	sys_size: int,
 	adder: proc(w: ^World, e: Entity, tid: typeid, data: rawptr),
 ) {
-	data, err := mem.alloc(sys_size, mem.DEFAULT_ALIGNMENT, c.world.allocator)
+	data, err := mem.alloc(sys_size, mem.DEFAULT_ALIGNMENT, c._world.allocator)
 	if err == nil {
 		mem.copy(data, sys, sys_size)
 		append(&c.buffer, Command{op = .AddSystem, data = data, size = sys_size, adder = adder})
@@ -189,7 +189,7 @@ commands_add_resource_with_destroy :: proc(
 		destroy: proc(_: ^T, _: mem.Allocator),
 	}
 
-	data, _ := mem.alloc(size_of(Payload), mem.DEFAULT_ALIGNMENT, c.world.allocator)
+	data, _ := mem.alloc(size_of(Payload), mem.DEFAULT_ALIGNMENT, c._world.allocator)
 	payload := (^Payload)(data)
 	payload.value = resource
 	payload.destroy = destroy
@@ -233,16 +233,16 @@ commands_flush :: proc(c: ^Commands) {
 	for cmd in c.buffer {
 		switch cmd.op {
 		case .AddComponent, .AddSystem, .AddResource, .RemoveComponent:
-			cmd.adder(c.world, cmd.entity, cmd.tid, cmd.data)
+			cmd.adder(c._world, cmd.entity, cmd.tid, cmd.data)
 		case .Despawn:
-			world_despawn(c.world, cmd.entity)
+			world_despawn(c._world, cmd.entity)
 		case .Spawn:
-			row := arch_add_entity(c.world.root, cmd.entity)
-			c.world.entities.record[cmd.entity.id] = {c.world.root, row}
+			row := arch_add_entity(c._world.root, cmd.entity)
+			c._world.entities.record[cmd.entity.id] = {c._world.root, row}
 		}
 
 		if cmd.data != nil {
-			free(cmd.data, c.world.allocator)
+			free(cmd.data, c._world.allocator)
 		}
 	}
 	clear(&c.buffer)

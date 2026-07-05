@@ -75,7 +75,7 @@ Or :: struct($T1: typeid, $T2: typeid) {
 
 
 Query :: struct($T: typeid) {
-	world:    ^ecs.World,
+	_world:   ^ecs.World,
 	state:    ^ecs.Query_State,
 	_phantom: ^T,
 }

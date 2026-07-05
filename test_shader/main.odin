@@ -15,6 +15,7 @@ import "../src/ecs"
 import "../src/ecs/params"
 import fps "../src/fps"
 import graphics "../src/graphics"
+import threeD "../src/graphics/3d"
 import log "../src/logging"
 import gtime "../src/time"
 import "../src/windowing"
@@ -23,10 +24,11 @@ import "core:math"
 import "vendor:sdl3"
 import "vendor:wgpu"
 
-// Component/Resource to store shader pass states and simulation time
-Shader_Pass_Resource :: struct {
+// Component to store shader pass states and simulation time
+Blob :: struct {
 	compute_pass: graphics.Shader_Pass,
 	render_pass:  graphics.Shader_Pass,
+	batch:        graphics.Batch3D,
 	time:         f32,
 	vertex_count: int,
 	index_count:  int,
@@ -45,7 +47,10 @@ struct Vertex {
     pos_x: f32,
     pos_y: f32,
     pos_z: f32,
-    color: array<f32, 4>,
+    color_r: f32,
+    color_g: f32,
+    color_b: f32,
+    color_a: f32,
 }
 struct MyUniforms {
 	time: f32,
@@ -91,10 +96,10 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     vertices[index].pos_z = new_pos.z;
     
     // Animate color based on time and wave displacement using the stable original position
-    vertices[index].color[0] = 0.1 + 0.6 * (0.5 + 0.5 * cos(uniforms.time + original_pos.x * 3.0));
-    vertices[index].color[1] = 0.3 + 0.5 * (0.5 + 0.5 * sin(uniforms.time + original_pos.y * 3.0));
-    vertices[index].color[2] = 0.5 + 0.5 * (0.5 + 0.5 * sin(uniforms.time * 1.5 + wave));
-    vertices[index].color[3] = 1.0;
+    vertices[index].color_r = 0.1 + 0.6 * (0.5 + 0.5 * cos(uniforms.time + original_pos.x * 3.0));
+    vertices[index].color_g = 0.3 + 0.5 * (0.5 + 0.5 * sin(uniforms.time + original_pos.y * 3.0));
+    vertices[index].color_b = 0.5 + 0.5 * (0.5 + 0.5 * sin(uniforms.time * 1.5 + wave));
+    vertices[index].color_a = 1.0;
 }
 `
 
@@ -154,6 +159,7 @@ setup_system :: proc(
 
 	log.info("Compiling and initializing 3D blob shader passes...")
 
+
 	// 1. Compile 3D Render Shader Pass
 	render_r: strings.Reader
 	render_pass, render_ok := graphics.create_render_shader_pass(
@@ -186,52 +192,72 @@ setup_system :: proc(
 
 	log.info("Shader passes compiled successfully!")
 
-	// 3. Register Shader Pass Resource
-	shader_res := Shader_Pass_Resource {
+	// 3. Spawn Shader Entity with Transform and Gizmo3D
+	blob_batch := graphics.init_batch3d(ctx.device, ctx.config.format)
+	shader_comp := Blob {
 		compute_pass = compute_pass,
 		render_pass  = render_pass,
+		batch        = blob_batch,
 		time         = 0.0,
 	}
 
-	ecs.world_add_resource(
-		commands.ptr.world,
-		shader_res,
-		proc(res: ^Shader_Pass_Resource, alloc: runtime.Allocator) {
-			graphics.destroy_shader_pass(&res.compute_pass)
-			graphics.destroy_shader_pass(&res.render_pass)
-		},
-	)
+	entity_t := transform.Transform{}
+	transform.init(&entity_t)
+
+	gizmo := threeD.Gizmo3D {
+		size      = 1.5,
+		thickness = 0.08,
+	}
+
+	entity := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(entity, shader_comp, entity_t)
+
+	// Spawn camera entity so that Gizmo3D has a camera to project from
+	cam := camera.Camera{}
+	camera.init(&cam)
+	camera.set_perspective(&cam, math.PI / 3.0, 800.0 / 600.0, 0.1, 100.0)
+
+	cam_t := transform.Transform{}
+	transform.init(&cam_t)
+	transform.set_translation(&cam_t, {0.0, 0.0, -2.5})
+	transform.set_rotation(&cam_t, linalg.quaternion_angle_axis_f32(0, {0, 1, 0}))
+
+	cam_ent := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(cam_ent, cam, cam_t)
 
 	// 4. Initialize and register default font for FPS/HUD rendering
 	font: graphics.Font
 	if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
-		ecs.world_add_resource(
-			commands.ptr.world,
+		ecs.commands_add_resource(
+			commands.ptr,
 			font,
 			proc(f: ^graphics.Font, alloc: runtime.Allocator) {
 				graphics.font_destroy(f)
 			},
 		)
 	}
+
+	// 5. Register Clear_Color resource to clear screen at beginning of frame
+	clear_color := graphics.Clear_Color{0.05, 0.08, 0.12, 1.0}
+	ecs.commands_add_resource(commands.ptr, clear_color)
 }
 
 draw_shader_system :: proc(
-	world: ^ecs.World,
-	batch3d_res: params.Res(graphics.Batch3D),
 	render_ctx_res: params.Res(graphics.Render_Context),
 	frame_ctx_res: params.Res(graphics.Frame_Context),
 	window_ctx_res: params.Res(windowing.Window_Context),
-	shader_res: params.Res(Shader_Pass_Resource),
+	shader_param: params.Single(Blob),
 ) {
-	ctx := render_ctx_res.ptr
-	fctx := frame_ctx_res.ptr
-	batch := batch3d_res.ptr
-	shader_data := shader_res.ptr
+	render_ctx := render_ctx_res.ptr
+	frame_ctx := frame_ctx_res.ptr
+	shader_data := shader_param.value
+	batch := &shader_data.batch
 	window_ctx := window_ctx_res.ptr
 
-	if ctx == nil || ctx.device == nil || fctx.encoder == nil || fctx.texture_view == nil do return
-	if batch == nil || shader_data == nil do return
+	if render_ctx == nil || render_ctx.device == nil || frame_ctx.encoder == nil || frame_ctx.texture_view == nil do return
+	if shader_data == nil do return
 	if window_ctx == nil || window_ctx.window == nil do return
+
 
 	win_w, win_h: c.int = 800, 600
 
@@ -241,22 +267,14 @@ draw_shader_system :: proc(
 	// 1. Update uniforms (time, intensity, aspect, padding)
 	shader_data.time += 0.016
 	uniforms := MyUniforms {
-		time = shader_data.time,
+		time      = shader_data.time,
 		intensity = 1.0,
-		aspect = aspect,
-		padding = 0.0,
+		aspect    = aspect,
+		padding   = 0.0,
 	}
 
-	graphics.shader_pass_update_uniforms(
-		&shader_data.compute_pass,
-		ctx,
-		uniforms,
-	)
-	graphics.shader_pass_update_uniforms(
-		&shader_data.render_pass,
-		ctx,
-		uniforms,
-	)
+	graphics.shader_pass_update_uniforms(&shader_data.compute_pass, render_ctx, uniforms)
+	graphics.shader_pass_update_uniforms(&shader_data.render_pass, render_ctx, uniforms)
 
 	// 2. Generate 3D UV Sphere once at startup
 	if shader_data.vertex_count == 0 {
@@ -299,7 +317,7 @@ draw_shader_system :: proc(
 		shader_data.vertex_count = len(batch.vertices)
 		shader_data.index_count = len(batch.indices)
 
-		graphics.batch3d_prepare_buffers(batch, ctx)
+		graphics.batch3d_prepare_buffers(batch, render_ctx)
 
 		// Immediately clear CPU arrays so main_render_system does not try to flush them
 		clear(&batch.vertices)
@@ -313,7 +331,13 @@ draw_shader_system :: proc(
 		if compute_pass_idx == -1 {
 			compute_pass_idx = graphics.batch3d_add_shader_pass(batch, shader_data.compute_pass)
 		}
-		graphics.batch3d_run_compute(batch, ctx, fctx.encoder, compute_pass_idx, workgroups)
+		graphics.batch3d_run_compute(
+			batch,
+			render_ctx,
+			frame_ctx.encoder,
+			compute_pass_idx,
+			workgroups,
+		)
 	}
 
 	// 4. Begin Render Pass and draw the GPU-deformed UV sphere
@@ -324,21 +348,23 @@ draw_shader_system :: proc(
 	graphics.batch3d_set_active_pass(batch, render_pass_idx)
 
 	color := wgpu.Color{0.05, 0.08, 0.12, 1.0}
-	render_pass := graphics.begin_render_pass(fctx, .Clear, color)
+	render_pass := graphics.begin_render_pass(frame_ctx, .Load, color)
 	defer graphics.end_render_pass(render_pass)
+
 
 	graphics.batch3d_draw_buffers(batch, render_pass, u32(shader_data.index_count))
 }
 
 cleanup_shader_system :: proc(
 	exit_events: params.EventReader(app.App_Exit_Event),
-	shader_res: params.Res(Shader_Pass_Resource),
+	shader_param: params.Single(Blob),
 ) {
 	if len(exit_events.events) > 0 {
-		if shader_res.ptr != nil {
-			log.info("Cleaning up shader pass resource WGPU bindings...")
-			graphics.destroy_shader_pass(&shader_res.ptr.compute_pass)
-			graphics.destroy_shader_pass(&shader_res.ptr.render_pass)
+		if shader_param.value != nil {
+			log.info("Cleaning up shader pass WGPU bindings...")
+			graphics.destroy_shader_pass(&shader_param.value.compute_pass)
+			graphics.destroy_shader_pass(&shader_param.value.render_pass)
+			graphics.destroy_batch3d(&shader_param.value.batch)
 		}
 	}
 }
@@ -371,7 +397,12 @@ main :: proc() {
 	log.info("Starting Shader Pass 3D Jelly Blob Demo...")
 
 	application := app.app_init(
-		[]app.Plugin{windowing.Window_Plugin(), graphics.Render_Plugin(), fps.Fps_Plugin()},
+		[]app.Plugin {
+			windowing.Window_Plugin(),
+			graphics.Render_Plugin(),
+			fps.Fps_Plugin(),
+			threeD.Gizmo_Plugin_3D(),
+		},
 	)
 	defer {
 		app.app_destroy(&application)
@@ -394,6 +425,7 @@ main :: proc() {
 	)
 
 	app.app_run_schedule(&application, app.Startup)
+
 
 	start_time := time.tick_now()
 	screenshot_taken := false

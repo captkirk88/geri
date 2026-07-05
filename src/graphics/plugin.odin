@@ -6,9 +6,20 @@ import "../ecs"
 import "../ecs/params"
 import log "../logging"
 import "../windowing"
+import "base:runtime"
 import "core:fmt"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
+
+wgpu_error_callback :: proc "c" (
+	device: ^wgpu.Device,
+	type: wgpu.ErrorType,
+	message: string,
+	userdata1, userdata2: rawptr,
+) {
+	context = runtime.default_context()
+	log.error("WGPU Validation Error: %s ---", message)
+}
 
 Request_Data :: struct {
 	adapter: wgpu.Adapter,
@@ -80,10 +91,14 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		return
 	}
 
+	device_desc := wgpu.DeviceDescriptor {
+		uncapturedErrorCallbackInfo = {callback = wgpu_error_callback},
+	}
+
 	// Request Device
 	device_future := wgpu.AdapterRequestDevice(
 		req_data.adapter,
-		nil,
+		&device_desc,
 		{callback = _on_device, userdata1 = &req_data},
 	)
 
@@ -107,8 +122,14 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	}
 
 	// Try to get preferred format
-	caps, _ := wgpu.SurfaceGetCapabilities(surface, req_data.adapter)
+	caps, status := wgpu.SurfaceGetCapabilities(surface, req_data.adapter)
 	defer wgpu.SurfaceCapabilitiesFreeMembers(caps)
+
+	#partial switch status {
+	case .Error:
+		log.warn("Failed to get WGPU Surface Capabilities.")
+
+	}
 
 	if caps.formatCount > 0 {
 		config.format = caps.formats[0]

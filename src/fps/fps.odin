@@ -85,7 +85,7 @@ fps_render_system :: proc(
 	h := f32(ctx.config.height)
 
 	// Pixel-space orthographic VP — maps world pixels to NDC (y-up, origin center)
-	vp := linalg.matrix_ortho3d_f32(-w / 2, w / 2, -h / 2, h / 2, -1.0, 1.0)
+	vp := linalg.matrix_ortho3d_f32(-w / 2, w / 2, -h / 2, h / 2, 0.0, 1.0)
 
 	padding: f32 = 8.0
 	font_size := c.font_size

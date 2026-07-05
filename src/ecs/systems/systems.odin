@@ -184,10 +184,10 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			sys_ptr := (^System)(sys)
 
-			if sys_ptr.commands.world == nil {
+			if sys_ptr.commands._world == nil {
 				sys_ptr.commands = ecs.commands_init(w)
-			} else if sys_ptr.commands.world != w {
-				sys_ptr.commands.world = w
+			} else if sys_ptr.commands._world != w {
+				sys_ptr.commands._world = w
 			}
 
 			cmds_struct := (^params.Commands)(ptr)
@@ -860,7 +860,7 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 		}
 		free(sys.params_data, allocator)
 	}
-	if sys.commands.world != nil {
+	if sys.commands._world != nil {
 		ecs.commands_destroy(&sys.commands)
 	}
 	free(sys, allocator)

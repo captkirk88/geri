@@ -477,7 +477,10 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 	using app
 
 	// Define 7 systems
-	sys_physics :: proc(query: params.Query(struct { pos: Position, vel: Velocity })) {
+	sys_physics :: proc(query: params.Query(struct {
+				pos: Position,
+				vel: Velocity,
+			})) {
 		for arch in params.query(query) {
 			pos := ecs.arch_get_field(arch, Position)
 			vel := ecs.arch_get_field(arch, Velocity)
@@ -493,7 +496,7 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 				enemy: Enemy,
 				pos:   Position,
 			})) {
-		w := query.world
+		w := query._world
 		for arch in params.query(query) {
 			enemy := ecs.arch_get_field(arch, Enemy)
 			pos := ecs.arch_get_field(arch, Position)
@@ -508,7 +511,10 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_collision :: proc(query: params.Query(struct { pos: Position, health: Health })) {
+	sys_collision :: proc(query: params.Query(struct {
+				pos:    Position,
+				health: Health,
+			})) {
 		for arch in params.query(query) {
 			pos := ecs.arch_get_field(arch, Position)
 			health := ecs.arch_get_field(arch, Health)
@@ -531,7 +537,10 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_animation :: proc(query: params.Query(struct { transform: Transform, pos: Position })) {
+	sys_animation :: proc(query: params.Query(struct {
+				transform: Transform,
+				pos:       Position,
+			})) {
 		for arch in params.query(query) {
 			transform := ecs.arch_get_field(arch, Transform)
 			pos := ecs.arch_get_field(arch, Position)
@@ -543,7 +552,11 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 		}
 	}
 
-	sys_audio :: proc(query: params.Query(struct { sound: Sound, pos: Position, not_tf: params.Without(Transform) })) {
+	sys_audio :: proc(query: params.Query(struct {
+				sound:  Sound,
+				pos:    Position,
+				not_tf: params.Without(Transform),
+			})) {
 		for arch in params.query(query) {
 			sound := ecs.arch_get_field(arch, Sound)
 			pos := ecs.arch_get_field(arch, Position)

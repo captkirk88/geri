@@ -1,7 +1,7 @@
 # Ignore the vendor directory
 vendor/
 
-# Ignore all markdown files except README.md
+# Ignore all markdown files except README.md and BENCHMARKS.md
 *.md
 !README.md
 !BENCHMARKS.md
@@ -15,3 +15,6 @@ build/
 
 # strudel designs
 *.strudel
+
+# images
+test_*.png

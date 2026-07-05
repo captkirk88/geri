@@ -59,7 +59,6 @@ World :: struct {
 	target_index:                 map[Entity][dynamic]Relation_Link,
 	iteration_depth:              int,
 	event_manager:                events.Event_Manager,
-	systems_to_run:               [dynamic]rawptr,
 	param_builders:               [dynamic]System_Param_Builder,
 	filter_registry:              map[typeid]Filter_Info,
 	filter_dedup:                 map[u64]typeid,
@@ -90,7 +89,6 @@ new_world :: proc(allocator := context.allocator) -> World {
 	w.target_index = make(map[Entity][dynamic]Relation_Link, 16, w.allocator)
 	w.transition_buffer = make([dynamic]typeid, 0, 16, w.allocator)
 	events.init(&w.event_manager, w.allocator)
-	w.systems_to_run = make([dynamic]rawptr, w.allocator)
 	w.param_builders = make([dynamic]System_Param_Builder, w.allocator)
 
 	w.serialization_procs = make(map[typeid]Serializer_Procs, 16, w.allocator)
@@ -136,7 +134,6 @@ world_destroy :: proc(w: ^World) {
 	delete(w.transition_buffer)
 	delete(w.entities)
 	delete(w.free_list)
-	delete(w.systems_to_run)
 	delete(w.resources)
 	delete(w.resource_destructors)
 	delete(w.param_builders)
@@ -254,19 +251,6 @@ world_is_alive :: proc(w: ^World, entity: Entity) -> bool {
 	return int(id) < len(w.entities) && w.entities.gen[id] == u32(entity.gen)
 }
 
-world_add_system :: proc(w: ^World, sys: rawptr) {
-	append(&w.systems_to_run, sys)
-}
-
-world_remove_system :: proc(w: ^World, sys: rawptr) {
-	for i := 0; i < len(w.systems_to_run); i += 1 {
-		s := w.systems_to_run[i]
-		if s == sys {
-			unordered_remove_dynamic_array(&w.systems_to_run, i)
-			break
-		}
-	}
-}
 
 world_clear_query_cache :: proc(w: ^World) {
 	sync.mutex_lock(&w.cache_mutex)

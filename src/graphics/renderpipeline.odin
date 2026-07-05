@@ -21,6 +21,7 @@ main_render_system :: proc(
 	
 	if fctx.encoder == nil || fctx.texture_view == nil do return
 
+
 	color: wgpu.Color
 	if clear_color.ptr != nil {
 		color = {clear_color.ptr.r, clear_color.ptr.g, clear_color.ptr.b, clear_color.ptr.a}

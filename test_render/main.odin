@@ -106,7 +106,7 @@ setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing
 	font: graphics.Font
 	if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
 		ecs.world_add_resource(
-			commands.ptr.world,
+			commands.ptr._world,
 			font,
 			proc(f: ^graphics.Font, alloc: runtime.Allocator) {
 				graphics.font_destroy(f)
