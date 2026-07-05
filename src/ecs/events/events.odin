@@ -18,10 +18,11 @@ Observer_Entry :: struct {
 
 @(private)
 Event_Buffer :: struct {
-	data:       [dynamic]byte,
-	entities:   [dynamic]u64,
-	event_size: int,
-	count:      int,
+	data:        [dynamic]byte,
+	entities:    [dynamic]u64,
+	event_size:  int,
+	count:       int,
+	clear_count: int,
 }
 
 Event_Manager :: struct {
@@ -138,5 +139,6 @@ clear_events :: proc(m: ^Event_Manager) {
 		clear(&buf.data)
 		clear(&buf.entities)
 		buf.count = 0
+		buf.clear_count += 1
 	}
 }

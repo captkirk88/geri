@@ -4,7 +4,7 @@ BUILD_OUTPUT_DIR = "build/{{os()}}/"
 vet = "-vet-style"
 target = ""
 optimize = "aggressive"
-collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs -collection:transform=src/transform -collection:camera=src/camera -collection:fps=src/fps"
+collections = "-collection:ecs=src/ecs -collection:logging=src/logging -collection:reflect=src/reflect -collection:benchmark=src/benchmark -collection:libs=vendor -collection:os_geri=src/os -collection:specs=src/specs -collection:transform=src/transform -collection:camera=src/camera -collection:fps=src/fps -collection:input=src/input -collection:ui=src/ui"
 build_lib_win = "-build-mode:dll -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.dll"
 build_lib_other = "-build-mode:dll -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}{{config_root | basename}}.so"
 build_exe_win = "-o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}try.exe"
@@ -18,6 +18,16 @@ run = [
   { task = "make_build" },
   { task = "update_deps" },
   "odin test . {{vars.vet}} {{vars.target}} {{vars.test}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_runner.exe",
+]
+
+[tasks.test-ui]
+description = "Run the UI and Input layout showcase on the main thread"
+interactive = true
+depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
+run = [
+  { task = "make_build" },
+  { task = "update_deps" },
+  "odin run test_ui {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} {{vars.collections}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui.exe -- 10s",
 ]
 
 [tasks.test-render]

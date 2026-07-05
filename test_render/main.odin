@@ -103,17 +103,6 @@ setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing
 
 	ecs.entity_commands_add_components(cam_ec, cam, t)
 
-	font: graphics.Font
-	if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
-		ecs.world_add_resource(
-			commands.ptr._world,
-			font,
-			proc(f: ^graphics.Font, alloc: runtime.Allocator) {
-				graphics.font_destroy(f)
-			},
-		)
-	}
-
 	for i in 0 ..< circle_count {
 		fx := rand.float32_range(-w / 2 + 15, w / 2 - 15)
 		fy := rand.float32_range(-h / 2 + 15, h / 2 - 15)

@@ -744,7 +744,6 @@ unobserve :: proc(w: ^World, id: events.Observer_ID) {
 	events.unregister(&w.event_manager, id)
 }
 
-@(private)
 trigger_lifecycle :: proc(w: ^World, op: Filter_Op, tid: typeid, e: Entity) {
 	types := [1]typeid{tid}
 	term := Term {
@@ -753,6 +752,18 @@ trigger_lifecycle :: proc(w: ^World, op: Filter_Op, tid: typeid, e: Entity) {
 	}
 	vid := world_resolve_term(w, term)
 	events.trigger(&w.event_manager, w, vid, transmute(u64)e)
+
+	if is_pair(tid) {
+		if info, ok := w.filter_registry[tid]; ok {
+			base_types := [1]typeid{info.relation}
+			base_term := Term {
+				op    = op,
+				types = base_types[:],
+			}
+			base_vid := world_resolve_term(w, base_term)
+			events.trigger(&w.event_manager, w, base_vid, transmute(u64)e)
+		}
+	}
 }
 
 /* Global Generic Events */

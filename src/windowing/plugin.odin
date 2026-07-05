@@ -3,6 +3,9 @@ package windowing
 import "../app"
 import "../ecs"
 import params "../ecs/params"
+import "core:log"
+import "core:strconv"
+import "core:strings"
 import "vendor:sdl3"
 
 // Default descriptor if not set by the user
@@ -25,7 +28,14 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		desc = ecs.world_get_resource(&a.world, Window_Descriptor)
 	}
 
-	if !sdl3.Init({.VIDEO}) {
+	if !sdl3.Init({.VIDEO, .GAMEPAD}) {
+		err_cstr := sdl3.GetError()
+		defer delete_cstring(err_cstr)
+		err_str, err := strings.clone_from_cstring(err_cstr)
+		if err != nil {
+			err_str = "Unknown SDL initialization error"
+		}
+		log.error("Failed to initialize SDL: %s", err_str)
 		return
 	}
 

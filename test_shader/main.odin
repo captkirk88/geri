@@ -225,18 +225,6 @@ setup_system :: proc(
 	cam_ent := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(cam_ent, cam, cam_t)
 
-	// 4. Initialize and register default font for FPS/HUD rendering
-	font: graphics.Font
-	if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
-		ecs.commands_add_resource(
-			commands.ptr,
-			font,
-			proc(f: ^graphics.Font, alloc: runtime.Allocator) {
-				graphics.font_destroy(f)
-			},
-		)
-	}
-
 	// 5. Register Clear_Color resource to clear screen at beginning of frame
 	clear_color := graphics.Clear_Color{0.05, 0.08, 0.12, 1.0}
 	ecs.commands_add_resource(commands.ptr, clear_color)

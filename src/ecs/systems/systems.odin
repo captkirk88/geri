@@ -123,13 +123,20 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		{
 			match = proc(
 				info: ^runtime.Type_Info,
-			) -> bool {return reflect.match_struct_field(info, "events", 2)},
+			) -> bool {return reflect.match_struct_field(info, "events", 3)},
 			build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 				s := info.variant.(runtime.Type_Info_Struct)
 				ev_type := reflect.get_slice_elem_type(s, 0)
 
 				cursor := (^int)(uintptr(ptr) + s.offsets[1])
+				generation := (^int)(uintptr(ptr) + s.offsets[2])
+
 				if buf, ok := w.event_manager.history[ev_type]; ok {
+					if generation^ != buf.clear_count {
+						cursor^ = 0
+						generation^ = buf.clear_count
+					}
+
 					total_events := buf.count
 
 					// Handle case where events were cleared between runs
@@ -248,7 +255,14 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			vid := ecs.world_resolve_term(w, term)
 
 			cursor := (^int)(uintptr(ptr) + s.offsets[1])
+			generation := (^int)(uintptr(ptr) + s.offsets[3])
+
 			if buf, ok := w.event_manager.history[vid]; ok {
+				if generation^ != buf.clear_count {
+					cursor^ = 0
+					generation^ = buf.clear_count
+				}
+
 				total_events := buf.count
 				if cursor^ > total_events {
 					cursor^ = 0
@@ -302,7 +316,14 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			vid := ecs.world_resolve_term(w, term)
 
 			cursor := (^int)(uintptr(ptr) + s.offsets[1])
+			generation := (^int)(uintptr(ptr) + s.offsets[3])
+
 			if buf, ok := w.event_manager.history[vid]; ok {
+				if generation^ != buf.clear_count {
+					cursor^ = 0
+					generation^ = buf.clear_count
+				}
+
 				total_events := buf.count
 				if cursor^ > total_events {
 					cursor^ = 0

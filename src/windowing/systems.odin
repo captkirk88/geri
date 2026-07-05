@@ -8,9 +8,12 @@ event_pump_system :: proc(
 	exit_writer: params.EventWriter(app.App_Exit_Event),
 	resize_writer: params.EventWriter(Window_Resized_Event),
 	close_writer: params.EventWriter(Window_Closed_Event),
+	sdl_event_writer: params.EventWriter(sdl3.Event),
 ) {
 	event: sdl3.Event
 	for sdl3.PollEvent(&event) {
+		params.write(sdl_event_writer, event)
+
 		#partial switch event.type {
 		case .QUIT:
 			params.write(exit_writer, app.App_Exit_Event{})

@@ -27,8 +27,9 @@ write :: #force_inline proc(writer: EventWriter($T), event: T) {
 
 // Read events of type T emitted since the last system run. Backed by temporary memory valid for the current frame.
 EventReader :: struct($T: typeid) {
-	events:  []T,
-	_cursor: int,
+	events:      []T,
+	_cursor:     int,
+	_generation: int,
 }
 
 // Receive a value piped in from a preceding pipe() composite system.
@@ -38,15 +39,17 @@ In :: struct($T: typeid) {
 }
 
 OnAdded :: struct($T: typeid) {
-	entities: []ecs.Entity,
-	_cursor:  int,
-	_phantom: ^T,
+	entities:    []ecs.Entity,
+	_cursor:     int,
+	_phantom:    ^T,
+	_generation: int,
 }
 
 OnRemoved :: struct($T: typeid) {
-	entities: []ecs.Entity,
-	_cursor:  int,
-	_phantom: ^T,
+	entities:    []ecs.Entity,
+	_cursor:     int,
+	_phantom:    ^T,
+	_generation: int,
 }
 
 Single :: struct($T: typeid) {

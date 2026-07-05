@@ -4,6 +4,7 @@ import "../app"
 import ecs "../ecs"
 import "../ecs/params"
 import graphics "../graphics"
+import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
 import "core:time"
@@ -25,7 +26,9 @@ Fps_Counter :: struct {
 
 // Dedicated batch for the HUD overlay — flushed in a separate LoadOp:.Load
 // render pass so FPS text is always composited on top of the scene.
-Fps_Batch :: graphics.Batch2D
+Fps_Batch :: struct {
+	batch: graphics.Batch2D,
+}
 
 // Returns the current averaged FPS.
 fps_average :: proc(c: ^Fps_Counter) -> f64 {
@@ -66,14 +69,16 @@ fps_render_system :: proc(
 	font_res: params.Res(graphics.Font),
 ) {
 	c := fps_res.ptr
-	batch := batch_res.ptr
+	batch_wrapper := batch_res.ptr
 	ctx := ctx_res.ptr
 	fctx := fctx_res.ptr
 	font := font_res.ptr
 
-	if c == nil || batch == nil || ctx == nil || ctx.device == nil do return
+	if c == nil || batch_wrapper == nil || ctx == nil || ctx.device == nil do return
 	if fctx == nil || fctx.encoder == nil || fctx.texture_view == nil do return
 	if font == nil do return
+
+	batch := &batch_wrapper.batch
 
 	avg := fps_average(c)
 	text := fmt.tprintf(
@@ -105,7 +110,7 @@ fps_cleanup_system :: proc(
 ) {
 	if len(exit_events.events) > 0 {
 		if batch_res.ptr != nil {
-			graphics.destroy_batch2d(batch_res.ptr)
+			graphics.destroy_batch2d(&batch_res.ptr.batch)
 		}
 	}
 }
@@ -116,7 +121,9 @@ fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	if render_ctx == nil || render_ctx.device == nil {
 		return // Render_Plugin not initialized — skip silently
 	}
-	hud_batch := graphics.init_batch2d(render_ctx.device, render_ctx.config.format)
+	hud_batch := Fps_Batch {
+		batch = graphics.init_batch2d(render_ctx.device, render_ctx.config.format),
+	}
 	app.app_add_resource(a, hud_batch)
 
 	counter := Fps_Counter {
@@ -124,6 +131,15 @@ fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		font_size = 0, // 0 = derive from loaded font's pixel_height
 	}
 	app.app_add_resource(a, counter)
+
+	// Load font for Fps overlay
+	font: graphics.Font
+	// TODO:have a default CC0 licensed font
+	if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
+		ecs.world_add_resource(&a.world, font, proc(f: ^graphics.Font, alloc: runtime.Allocator) {
+			graphics.font_destroy(f)
+		})
+	}
 
 	app.app_add_system(a, app.First, fps_tick_system)
 
