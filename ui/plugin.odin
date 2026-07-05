@@ -22,6 +22,7 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	// Add layout and interaction systems to app.Update
 	app.app_add_system(a, app.Update, ui_layout_system)
 	app.app_add_system(a, app.Update, ui_button_interaction_system)
+	app.app_add_system(a, app.Update, ui_slider_interaction_system)
 
 	// Add render system to app.Render, scheduled before the main render system flushes Batch2D
 	app.app_add_system(

@@ -1109,6 +1109,15 @@ query_matches :: proc(q: ^Query, arch: ^Archetype) -> bool {
 	return true
 }
 
+on_add :: proc(t: typeid) -> Term {
+	return {op = .OnAdd, types = slice.clone([]typeid{t}, context.temp_allocator)}
+}
+
+on_remove :: proc(t: typeid) -> Term {
+	return {op = .OnRemove, types = slice.clone([]typeid{t}, context.temp_allocator)}
+}
+
+
 @(test)
 test_world_basic_operations :: proc(t: ^testing.T) {
 	w := new_world()

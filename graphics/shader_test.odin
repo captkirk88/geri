@@ -70,3 +70,21 @@ test_batch3d_shader_pass_lifecycle :: proc(t: ^testing.T) {
 	testing.expect(t, batch.vertices == nil)
 	testing.expect(t, batch.indices == nil)
 }
+
+@(test)
+test_render_target_nil_safety :: proc(t: ^testing.T) {
+	target, ok := render_target_init(nil, 800, 600)
+	testing.expect(t, !ok)
+	testing.expect(t, target.texture == nil)
+	testing.expect(t, target.texture_view == nil)
+
+	ctx := Render_Context{}
+	target2, ok2 := render_target_init(&ctx, 800, 600)
+	testing.expect(t, !ok2)
+	testing.expect(t, target2.texture == nil)
+	testing.expect(t, target2.texture_view == nil)
+
+	// Safe to destroy even if nil/zeroed
+	render_target_destroy(&target2)
+}
+

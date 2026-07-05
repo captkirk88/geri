@@ -1,15 +1,18 @@
 package ui
 
+import camera "../camera"
 import "../ecs"
 import "../ecs/params"
 import graphics "../graphics"
 import twoD "../graphics/2d"
 import input "../input"
+import transform "../transform"
 import "../windowing"
 import "base:runtime"
 import "core:c"
 import "core:math/linalg"
 import "vendor:sdl3"
+import "vendor:wgpu"
 
 // Helper function to get children pointing to parent via ChildOf relation
 ui_get_children :: proc(
@@ -61,26 +64,35 @@ ui_cascade_despawn :: proc(w: ^ecs.World, e: ecs.Entity) {
 	}
 }
 
-on_add :: proc(t: typeid, allocator := context.temp_allocator) -> ecs.Term {
-	types := make([]typeid, 1, allocator)
-	types[0] = t
-	return ecs.Term{op = .OnAdd, types = types}
-}
-
-on_remove :: proc(t: typeid, allocator := context.temp_allocator) -> ecs.Term {
-	types := make([]typeid, 1, allocator)
-	types[0] = t
-	return ecs.Term{op = .OnRemove, types = types}
-}
-
 ui_observer_init :: proc(w: ^ecs.World) {
-	ecs.observe(w, on_add(UI_Node), ui_mark_dirty)
-	ecs.observe(w, on_add(Layout_Flex), ui_mark_dirty)
-	ecs.observe(w, on_add(Layout_Grid), ui_mark_dirty)
-	ecs.observe(w, on_add(Layout_Anchor), ui_mark_dirty)
-	ecs.observe(w, on_add(ecs.ChildOf), ui_mark_dirty)
+	ecs.observe(w, ecs.on_add(UI_Node), ui_mark_dirty)
+	ecs.observe(w, ecs.on_add(Layout_Flex), ui_mark_dirty)
+	ecs.observe(w, ecs.on_add(Layout_Grid), ui_mark_dirty)
+	ecs.observe(w, ecs.on_add(Layout_Anchor), ui_mark_dirty)
+	ecs.observe(w, ecs.on_add(ecs.ChildOf), ui_mark_dirty)
 
-	ecs.observe(w, on_remove(ecs.ChildOf), ui_cascade_despawn)
+	ecs.observe(w, ecs.on_remove(ecs.ChildOf), ui_cascade_despawn)
+
+	ecs.observe(w, ecs.on_add(UI_Canvas_Target), ui_canvas_target_init_observer)
+	ecs.observe(w, ecs.on_remove(UI_Canvas_Target), ui_canvas_target_destroy_observer)
+}
+
+ui_canvas_target_init_observer :: proc(w: ^ecs.World, e: ecs.Entity) {
+	target := ecs.world_get_component(w, e, UI_Canvas_Target)
+	if target != nil {
+		ctx := ecs.world_get_resource(w, graphics.Render_Context)
+		if ctx != nil {
+			target.batch = graphics.init_batch2d(ctx.device, target.target.format)
+		}
+	}
+}
+
+ui_canvas_target_destroy_observer :: proc(w: ^ecs.World, e: ecs.Entity) {
+	target := ecs.world_get_component(w, e, UI_Canvas_Target)
+	if target != nil {
+		graphics.destroy_batch2d(&target.batch)
+		graphics.render_target_destroy(&target.target)
+	}
 }
 
 ui_solve_anchor :: proc(
@@ -428,7 +440,19 @@ ui_layout_system :: proc(
 		entities := ecs.arch_get_entities(arch)
 		for e in entities {
 			if !ui_has_parent(world, e) {
-				ui_compute_node_layout(world, e, parent_rect)
+				rect := parent_rect
+
+				canvas := ecs.world_get_component(world, e, UI_Canvas)
+				if canvas != nil && canvas.render_mode == .World_Space {
+					rect = UI_Rect{0, 0, canvas.reference_size.x, canvas.reference_size.y}
+				}
+
+				target := ecs.world_get_component(world, e, UI_Canvas_Target)
+				if target != nil {
+					rect = UI_Rect{0, 0, f32(target.target.width), f32(target.target.height)}
+				}
+
+				ui_compute_node_layout(world, e, rect)
 			}
 		}
 	}
@@ -545,6 +569,16 @@ ui_render_node :: proc(
 				font_size := label.font_size > 0.0 ? label.font_size : font.pixel_height
 				x := node.rect.x + node.padding[3]
 				y := node.rect.y + node.padding[0]
+
+				size_scale := font.pixel_height > 0.0 ? (font_size / font.pixel_height) : 1.0
+				baseline_offset := f32(font.ascent) * font.scale * size_scale
+				det2 := vp[0][0] * vp[1][1] - vp[0][1] * vp[1][0]
+				if det2 < 0.0 {
+					y += baseline_offset
+				} else {
+					y -= baseline_offset
+				}
+
 				color := has_text_color_override ? text_color_override : label.color
 				graphics.draw_text(batch, label.text, x, y, font, 1.0, color, vp)
 			}
@@ -599,36 +633,141 @@ ui_render_system :: proc(
 	batch2d: params.Res(graphics.Batch2D),
 	render_ctx: params.Res(graphics.Render_Context),
 	window_res: params.Res(windowing.Window_Context),
+	fctx_res: params.Res(graphics.Frame_Context),
 ) {
-	if render_ctx.ptr == nil || render_ctx.ptr.device == nil || batch2d.ptr == nil || window_res.ptr == nil do return
+	if render_ctx.ptr == nil || render_ctx.ptr.device == nil || batch2d.ptr == nil || window_res.ptr == nil || fctx_res.ptr == nil || fctx_res.ptr.encoder == nil do return
 
+	fctx := fctx_res.ptr
 	win_w, win_h: c.int
 	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-	vp := ui_projection_matrix(f32(win_w), f32(win_h))
+	default_vp := ui_projection_matrix(f32(win_w), f32(win_h))
 
 	// Find root nodes and render recursively
 	for arch in ecs.query(world, UI_Node) {
 		entities := ecs.arch_get_entities(arch)
 		for e in entities {
 			if !ui_has_parent(world, e) {
-				ui_render_node(world, e, batch2d.ptr, vp)
+				target := ecs.world_get_component(world, e, UI_Canvas_Target)
+				if target != nil {
+					// 1. Offscreen Render Target UI Canvas
+					vp := ui_projection_matrix(f32(target.target.width), f32(target.target.height))
+
+					// Clear the local batch
+					clear(&target.batch.vertices)
+					clear(&target.batch.indices)
+
+					// Append UI geometry to the local batch
+					ui_render_node(world, e, &target.batch, vp)
+
+					// Flush local batch to the offscreen target texture view
+					graphics.render_batch2d(
+						&target.batch,
+						render_ctx.ptr,
+						fctx.encoder,
+						target.target,
+						wgpu.LoadOp.Clear,
+						wgpu.Color{0, 0, 0, 0},
+					)
+				} else {
+					// 2. Standard or World-space UI Canvas
+					canvas := ecs.world_get_component(world, e, UI_Canvas)
+					vp := default_vp
+
+					if canvas != nil && canvas.render_mode == .World_Space {
+						canvas_trans := ecs.world_get_component(world, e, transform.Transform)
+						if canvas_trans != nil {
+							cam := ecs.world_get_component(world, canvas.camera, camera.Camera)
+							cam_trans := ecs.world_get_component(
+								world,
+								canvas.camera,
+								transform.Transform,
+							)
+
+							if cam != nil && cam_trans != nil {
+								// 3D Projected Canvas
+								camera_vp := camera.get_view_projection(cam^, cam_trans^)
+								canvas_model := canvas_trans.world_matrix
+
+								sx := canvas.world_size.x / canvas.reference_size.x
+								sy := -canvas.world_size.y / canvas.reference_size.y
+								tx := -canvas.world_size.x * 0.5
+								ty := canvas.world_size.y * 0.5
+								local_to_quad :=
+									linalg.matrix4_translate_f32({tx, ty, 0.0}) *
+									linalg.matrix4_scale_f32({sx, sy, 1.0})
+
+								vp = camera_vp * canvas_model * local_to_quad
+							} else {
+								// 2D Rotated/Scaled Canvas
+								win_w, win_h: c.int
+								sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+								camera_vp := ui_projection_matrix(f32(win_w), f32(win_h))
+
+								canvas_model := canvas_trans.world_matrix
+								local_to_center := linalg.matrix4_translate_f32(
+									{
+										-canvas.reference_size.x * 0.5,
+										-canvas.reference_size.y * 0.5,
+										0.0,
+									},
+								)
+
+								vp = camera_vp * canvas_model * local_to_center
+							}
+						}
+					}
+
+					ui_render_node(world, e, batch2d.ptr, vp)
+				}
 			}
 		}
 	}
 }
 
-ui_button_interaction_system :: proc(world: ^ecs.World, mouse_inp: input.Input(input.ButtonCode)) {
-	mpos := input.mouse_position(mouse_inp)
-	is_left_down := input.is_down(mouse_inp, input.ButtonCode.Left)
-	is_left_pressed := input.is_pressed(mouse_inp, input.ButtonCode.Left)
+ui_get_parent :: proc(w: ^ecs.World, entity: ecs.Entity) -> ecs.Entity {
+	comps, ok := ecs.world_get_all_components(w, entity, context.temp_allocator)
+	if !ok do return {}
+	defer delete(comps, context.temp_allocator)
+	for c in comps {
+		if ecs.is_pair(c.id) {
+			if info, found := w.filter_registry[c.id]; found {
+				if info.relation == typeid_of(ecs.ChildOf) {
+					return info.target
+				}
+			}
+		}
+	}
+	return {}
+}
 
+ui_get_root_canvas :: proc(w: ^ecs.World, e: ecs.Entity) -> ecs.Entity {
+	curr := e
+	for {
+		parent := ui_get_parent(w, curr)
+		if parent == {} do break
+		curr = parent
+	}
+	return curr
+}
+
+ui_button_interaction_system :: proc(
+	world: ^ecs.World,
+	mouse_inp: input.Input(input.MouseButtonCode),
+) {
 	for arch in ecs.query(world, UI_Node, Button) {
 		nodes := ecs.arch_get_field(arch, UI_Node)
 		buttons := ecs.arch_get_field(arch, Button)
+		entities := ecs.arch_get_entities(arch)
 
 		for i in 0 ..< len(nodes) {
 			node := &nodes[i]
 			btn := &buttons[i]
+			entity := entities[i]
+
+			root_canvas := ui_get_root_canvas(world, entity)
+			mpos := input.mouse_position(mouse_inp, root_canvas)
+			is_down := input.is_down(mouse_inp, input.MouseButtonCode.Left)
+			is_pressed := input.is_pressed(mouse_inp, input.MouseButtonCode.Left)
 
 			in_bounds :=
 				mpos.x >= node.rect.x &&
@@ -640,17 +779,50 @@ ui_button_interaction_system :: proc(world: ^ecs.World, mouse_inp: input.Input(i
 			btn.is_clicked = false
 
 			if in_bounds {
-				if is_left_pressed {
+				if is_pressed {
 					btn.is_pressed = true
 				}
 				if btn.is_pressed {
-					if !is_left_down {
+					if !is_down {
 						btn.is_pressed = false
 						btn.is_clicked = true
 					}
 				}
 			} else {
 				btn.is_pressed = false
+			}
+		}
+	}
+}
+
+ui_slider_interaction_system :: proc(
+	world: ^ecs.World,
+	mouse_inp: input.Input(input.MouseButtonCode),
+) {
+	for arch in ecs.query(world, UI_Node, Slider) {
+		nodes := ecs.arch_get_field(arch, UI_Node)
+		sliders := ecs.arch_get_field(arch, Slider)
+		entities := ecs.arch_get_entities(arch)
+
+		for i in 0 ..< len(nodes) {
+			node := &nodes[i]
+			slider := &sliders[i]
+			entity := entities[i]
+
+			root_canvas := ui_get_root_canvas(world, entity)
+			mpos := input.mouse_position(mouse_inp, root_canvas)
+			is_down := input.is_down(mouse_inp, input.MouseButtonCode.Left)
+
+			in_bounds :=
+				mpos.x >= node.rect.x &&
+				mpos.x <= node.rect.x + node.rect.w &&
+				mpos.y >= node.rect.y &&
+				mpos.y <= node.rect.y + node.rect.h
+
+			if is_down && in_bounds {
+				local_x := mpos.x - node.rect.x
+				slider.value = clamp(local_x / node.rect.w, 0.0, 1.0)
+				ui_mark_dirty(world, entity)
 			}
 		}
 	}

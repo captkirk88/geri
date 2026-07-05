@@ -119,3 +119,13 @@ Batch3D :: struct {
 	shader_passes:   [dynamic]Shader_Pass, // Registered custom shader passes.
 	active_pass_idx: int, // Index of the active custom pass. -1 uses default.
 }
+
+// A Render_Target wraps an offscreen texture, view, and layout details for rendering.
+Render_Target :: struct {
+	texture:      wgpu.Texture,     // Underlying texture.
+	texture_view: wgpu.TextureView, // Active view of the texture for the render pass.
+	width:        u32,              // Width of the target in pixels.
+	height:       u32,              // Height of the target in pixels.
+	format:       wgpu.TextureFormat, // Texture color format.
+}
+

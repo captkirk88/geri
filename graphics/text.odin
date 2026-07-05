@@ -45,6 +45,12 @@ Cached_Glyph :: struct {
 	pixels:        []u8,
 }
 
+text_is_y_down :: proc(vp: linalg.Matrix4f32) -> bool {
+	// Using the linear-part determinant avoids sign flips during rotation.
+	det2 := vp[0][0] * vp[1][1] - vp[0][1] * vp[1][0]
+	return det2 < 0.0
+}
+
 font_init :: proc(f: ^Font, font_path: string, pixel_height: f32) -> bool {
 	data, err := os.read_entire_file(font_path, context.allocator)
 	if err != nil do return false
@@ -121,8 +127,10 @@ append_glyph_preloaded :: proc(
 ) {
 	if g.width == 0 || g.height == 0 do return
 
+	is_y_down := text_is_y_down(vp)
+
 	px := x_pos + f32(g.xoff)
-	py := y_pos - f32(g.yoff)
+	py := is_y_down ? (y_pos + f32(g.yoff)) : (y_pos - f32(g.yoff))
 
 	for y in 0 ..< g.height {
 		for x in 0 ..< g.width {
@@ -132,7 +140,7 @@ append_glyph_preloaded :: proc(
 				c := [4]f32{color[0], color[1], color[2], alpha}
 
 				gx := px + f32(x)
-				gy := py - f32(y)
+				gy := is_y_down ? (py + f32(y)) : (py - f32(y))
 
 				if italic {
 					skew := f32(g.height - y) * 0.2
@@ -173,6 +181,8 @@ draw_text :: proc(
 	if font != nil {
 		spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
 
+		is_y_down := text_is_y_down(vp)
+
 		cursor_x := x
 		cursor_y := y
 
@@ -190,15 +200,27 @@ draw_text :: proc(
 			for r in span.text {
 				if r == '\n' {
 					cursor_x = x
-					cursor_y -=
-						f32(active_font.ascent - active_font.descent + active_font.line_gap) * scale_val
+					line_offset :=
+						f32(active_font.ascent - active_font.descent + active_font.line_gap) *
+						scale_val
+					if is_y_down {
+						cursor_y += line_offset
+					} else {
+						cursor_y -= line_offset
+					}
 					continue
 				}
 				g := get_glyph(active_font, r, current_pixel_height)
 				advance := f32(g.advance) * scale_val
 				if span.has_bg {
-					y0 := cursor_y + f32(active_font.descent) * scale_val
-					y1 := cursor_y + f32(active_font.ascent) * scale_val
+					y0, y1: f32
+					if is_y_down {
+						y0 = cursor_y - f32(active_font.ascent) * scale_val
+						y1 = cursor_y - f32(active_font.descent) * scale_val
+					} else {
+						y0 = cursor_y + f32(active_font.descent) * scale_val
+						y1 = cursor_y + f32(active_font.ascent) * scale_val
+					}
 					append_quad(batch, cursor_x, y0, cursor_x + advance, y1, span.bg_color, vp)
 				}
 				append_glyph_preloaded(
@@ -213,20 +235,38 @@ draw_text :: proc(
 					span.italic,
 				)
 				if span.underline {
-					y_under := cursor_y + f32(active_font.descent) * scale_val * 0.3
 					thickness := max(f32(1.0), scale_val)
-					append_quad(
-						batch,
-						cursor_x,
-						y_under - thickness,
-						cursor_x + advance,
-						y_under,
-						span.color,
-						vp,
-					)
+					if is_y_down {
+						y_under := cursor_y - f32(active_font.descent) * scale_val * 0.3
+						append_quad(
+							batch,
+							cursor_x,
+							y_under,
+							cursor_x + advance,
+							y_under + thickness,
+							span.color,
+							vp,
+						)
+					} else {
+						y_under := cursor_y + f32(active_font.descent) * scale_val * 0.3
+						append_quad(
+							batch,
+							cursor_x,
+							y_under - thickness,
+							cursor_x + advance,
+							y_under,
+							span.color,
+							vp,
+						)
+					}
 				}
 				if span.strikethrough {
-					y_strike := cursor_y + f32(active_font.ascent) * scale_val * 0.3
+					y_strike: f32
+					if is_y_down {
+						y_strike = cursor_y - f32(active_font.ascent) * scale_val * 0.3
+					} else {
+						y_strike = cursor_y + f32(active_font.ascent) * scale_val * 0.3
+					}
 					thickness := max(f32(1.0), scale_val)
 					append_quad(
 						batch,
@@ -244,6 +284,8 @@ draw_text :: proc(
 	} else {
 		spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
 
+		is_y_down := vp[1][1] < 0.0
+
 		cursor_x := x
 		cursor_y := y
 
@@ -252,7 +294,11 @@ draw_text :: proc(
 				ch := span.text[i]
 				if ch == '\n' {
 					cursor_x = x
-					cursor_y -= 10.0 * scale
+					if is_y_down {
+						cursor_y += 10.0 * scale
+					} else {
+						cursor_y -= 10.0 * scale
+					}
 					continue
 				}
 				if span.has_bg {
@@ -278,23 +324,41 @@ draw_text :: proc(
 					span.italic,
 				)
 				if span.underline {
-					append_quad(
-						batch,
-						cursor_x,
-						cursor_y - scale,
-						cursor_x + 8.0 * scale,
-						cursor_y,
-						span.color,
-						vp,
-					)
+					if is_y_down {
+						append_quad(
+							batch,
+							cursor_x,
+							cursor_y + 8.0 * scale,
+							cursor_x + 8.0 * scale,
+							cursor_y + 8.0 * scale + scale,
+							span.color,
+							vp,
+						)
+					} else {
+						append_quad(
+							batch,
+							cursor_x,
+							cursor_y - scale,
+							cursor_x + 8.0 * scale,
+							cursor_y,
+							span.color,
+							vp,
+						)
+					}
 				}
 				if span.strikethrough {
+					y_strike: f32
+					if is_y_down {
+						y_strike = cursor_y + 4.0 * scale
+					} else {
+						y_strike = cursor_y + 3.0 * scale
+					}
 					append_quad(
 						batch,
 						cursor_x,
-						cursor_y + 3.0 * scale,
+						y_strike,
 						cursor_x + 8.0 * scale,
-						cursor_y + 4.0 * scale,
+						y_strike + scale,
 						span.color,
 						vp,
 					)
@@ -602,16 +666,18 @@ append_char :: proc(
 	if c_idx >= 128 do return
 	bitmap := font8x8_basic[c_idx]
 
+	is_y_down := vp[1][1] < 0.0
+
 	for y in 0 ..< 8 {
 		row_byte := bitmap[y]
 		for x in 0 ..< 8 {
 			bit := (row_byte >> uint(x)) & 1
 			if bit == 1 {
 				px := x_pos + f32(x) * scale
-				py := y_pos + f32(7 - y) * scale
+				py := is_y_down ? (y_pos + f32(y) * scale) : (y_pos + f32(7 - y) * scale)
 
 				if italic {
-					skew := f32(7 - y) * scale * 0.2
+					skew := is_y_down ? (f32(y) * scale * 0.2) : (f32(7 - y) * scale * 0.2)
 					px += skew
 				}
 
@@ -623,7 +689,6 @@ append_char :: proc(
 		}
 	}
 }
-
 
 
 Custom_Font_Cache_Entry :: struct {

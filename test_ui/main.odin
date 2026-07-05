@@ -14,9 +14,11 @@ import "../ecs"
 import "../ecs/params"
 import fps "../fps"
 import graphics "../graphics"
+import twoD "../graphics/2d"
 import input "../input"
 import log "../logging"
 import gtime "../time"
+import transform "../transform"
 import ui "../ui"
 import "../windowing"
 
@@ -25,17 +27,11 @@ Grid_Cell :: struct {
 	index: int,
 }
 
-// Hoverable/Clickable button state
-Button :: struct {
-	hover_color: [4]f32,
-	click_color: [4]f32,
-	base_color:  [4]f32,
-}
-
 // Anchor target to scale based on scroll pinch
 Pinchable_Box :: struct {
 	base_width:  f32,
 	base_height: f32,
+	scale:       f32,
 }
 
 Grid_Panel_Res :: struct {
@@ -46,6 +42,8 @@ Showcase_State :: struct {
 	start_time:     time.Tick,
 	grid_despawned: bool,
 	verified:       bool,
+	box_canvas:     ecs.Entity,
+	box_color:      [4]f32,
 }
 
 setup_system :: proc(commands: params.Commands) {
@@ -56,7 +54,7 @@ setup_system :: proc(commands: params.Commands) {
 		ui.UI_Node {
 			width    = {100.0, .Percent},
 			height   = {100.0, .Percent},
-			bg_color = {0.1, 0.1, 0.12, 1.0}, // dark slate bg
+			bg_color = {0.1, 0.1, 0.12, 0.0}, // transparent to reveal rotating box
 		},
 		ui.Layout_Flex {
 			direction = .Row,
@@ -71,11 +69,11 @@ setup_system :: proc(commands: params.Commands) {
 	ecs.entity_commands_add_components(
 		flex_panel,
 		ui.UI_Node {
-			width = {30.0, .Percent},
-			height = {100.0, .Percent},
-			margin = {20.0, 0.0, 20.0, 20.0},
-			padding = {20.0, 20.0, 20.0, 20.0},
-			bg_color = {0.18, 0.18, 0.22, 1.0},
+			width        = {30.0, .Percent},
+			height       = {100.0, .Percent},
+			margin       = {20.0, 0.0, 20.0, 20.0},
+			padding      = {20.0, 20.0, 20.0, 20.0},
+			bg_color     = {0.18, 0.18, 0.22, 0.8}, // semi-transparent
 			border_color = {0.3, 0.3, 0.4, 1.0},
 			border_width = 2.0,
 		},
@@ -92,20 +90,44 @@ setup_system :: proc(commands: params.Commands) {
 	for i in 0 ..< 3 {
 		btn := ecs.commands_spawn(commands.ptr)
 		grow_val: f32 = (i == 1) ? 1.0 : 0.0 // Second button grows to fill space
+
+		node := ui.UI_Node {
+			width        = {100.0, .Percent},
+			height       = {60.0, .Pixels},
+			bg_color     = {0.25, 0.25, 0.35, 1.0},
+			border_color = {0.4, 0.4, 0.6, 1.0},
+			border_width = 1.0,
+		}
+
+		if i == 0 {
+			node.padding = {18.0, 20.0, 15.0, 20.0} // Vertical centering padding
+			ecs.entity_commands_add_components(
+				btn,
+				ui.Label{text = "[c=yellow][b]Click Me![/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
+			)
+		}
+
 		ecs.entity_commands_add_components(
 			btn,
-			ui.UI_Node {
-				width = {100.0, .Percent},
-				height = {60.0, .Pixels},
-				bg_color = {0.25, 0.25, 0.35, 1.0},
-				border_color = {0.4, 0.4, 0.6, 1.0},
-				border_width = 1.0,
-			},
+			node,
 			ui.Flex_Item{grow = grow_val},
-			Button {
-				base_color = {0.25, 0.25, 0.35, 1.0},
-				hover_color = {0.35, 0.35, 0.5, 1.0},
-				click_color = {0.5, 0.4, 0.6, 1.0},
+			ui.Button{},
+			ui.UI_Style {
+				normal = {
+					bg_color = {0.25, 0.25, 0.35, 1.0},
+					border_color = {0.4, 0.4, 0.6, 1.0},
+					border_width = 1.0,
+				},
+				hover = {
+					bg_color = {0.35, 0.35, 0.5, 1.0},
+					border_color = {0.4, 0.4, 0.6, 1.0},
+					border_width = 1.0,
+				},
+				active = {
+					bg_color = {0.5, 0.4, 0.6, 1.0},
+					border_color = {0.4, 0.4, 0.6, 1.0},
+					border_width = 1.0,
+				},
 			},
 		)
 		ecs.commands_add_relation(commands.ptr, btn.entity, ecs.ChildOf, flex_panel.entity)
@@ -116,11 +138,11 @@ setup_system :: proc(commands: params.Commands) {
 	ecs.entity_commands_add_components(
 		grid_panel,
 		ui.UI_Node {
-			width = {30.0, .Percent},
-			height = {100.0, .Percent},
-			margin = {20.0, 0.0, 20.0, 0.0},
-			padding = {20.0, 20.0, 20.0, 20.0},
-			bg_color = {0.15, 0.2, 0.18, 1.0},
+			width        = {30.0, .Percent},
+			height       = {100.0, .Percent},
+			margin       = {20.0, 0.0, 20.0, 0.0},
+			padding      = {20.0, 20.0, 20.0, 20.0},
+			bg_color     = {0.15, 0.2, 0.18, 0.8}, // semi-transparent
 			border_color = {0.25, 0.4, 0.3, 1.0},
 			border_width = 2.0,
 		},
@@ -156,11 +178,11 @@ setup_system :: proc(commands: params.Commands) {
 	ecs.entity_commands_add_components(
 		anchor_panel,
 		ui.UI_Node {
-			width = {30.0, .Percent},
-			height = {100.0, .Percent},
-			margin = {20.0, 20.0, 20.0, 0.0},
-			padding = {20.0, 20.0, 20.0, 20.0},
-			bg_color = {0.22, 0.18, 0.18, 1.0},
+			width        = {30.0, .Percent},
+			height       = {100.0, .Percent},
+			margin       = {20.0, 20.0, 20.0, 0.0},
+			padding      = {20.0, 20.0, 20.0, 20.0},
+			bg_color     = {0.22, 0.18, 0.18, 0.8}, // semi-transparent
 			border_color = {0.4, 0.3, 0.3, 1.0},
 			border_width = 2.0,
 		},
@@ -184,48 +206,74 @@ setup_system :: proc(commands: params.Commands) {
 			offset_min = {0.0, 0.0},
 			offset_max = {0.0, 0.0},
 		},
-		Pinchable_Box{base_width = 150.0, base_height = 150.0},
+		Pinchable_Box{base_width = 150.0, base_height = 150.0, scale = 1.0},
 	)
 	ecs.commands_add_relation(commands.ptr, pinch_box.entity, ecs.ChildOf, anchor_panel.entity)
+
+	// Spawn Rotating Box UI Canvas
+	box_canvas := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		box_canvas,
+		ui.UI_Node {
+			width        = {250.0, .Pixels},
+			height       = {250.0, .Pixels},
+			bg_color     = {0.5, 0.15, 0.7, 0.5}, // Initially semi-transparent purple
+			border_color = {0.7, 0.3, 0.9, 1.0},
+			border_width = 2.0,
+		},
+		ui.Layout_Flex {
+			direction = .Column,
+			justify_content = .Center,
+			align_items = .Center,
+			gap = 10.0,
+		},
+		ui.UI_Canvas{render_mode = .World_Space, reference_size = {250, 250}},
+		transform.Transform{world_matrix = linalg.MATRIX4F32_IDENTITY},
+	)
+
+	// Label for slider
+	lbl := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		lbl,
+		ui.UI_Node {
+			width   = {100.0, .Percent},
+			height  = {30.0, .Pixels},
+			padding = {0, 0, 0, 35}, // Indent to align nicely
+		},
+		ui.Label{text = "[c=white][b]Box Color[/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
+	)
+	ecs.commands_add_relation(commands.ptr, lbl.entity, ecs.ChildOf, box_canvas.entity)
+
+	// Color slider
+	sld := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		sld,
+		ui.UI_Node {
+			width = {180.0, .Pixels},
+			height = {20.0, .Pixels},
+			bg_color = {0.2, 0.2, 0.2, 1.0},
+			border_color = {0.4, 0.4, 0.4, 1.0},
+			border_width = 1.0,
+		},
+		ui.Slider {
+			value = 0.5,
+			active_color = {0.8, 0.2, 0.6, 1.0},
+			knob_color = {1.0, 1.0, 1.0, 1.0},
+		},
+	)
+	ecs.commands_add_relation(commands.ptr, sld.entity, ecs.ChildOf, box_canvas.entity)
 
 	// Add showcase state resource
 	ecs.commands_add_resource(
 		commands.ptr,
-		Showcase_State{start_time = time.tick_now(), grid_despawned = false, verified = false},
+		Showcase_State {
+			start_time = time.tick_now(),
+			grid_despawned = false,
+			verified = false,
+			box_canvas = box_canvas.entity,
+			box_color = {0.5, 0.15, 0.7, 0.5},
+		},
 	)
-}
-
-// Interaction system that highlights buttons based on hovering/clicking (Input(ButtonCode) + mouse pos)
-button_interaction_system :: proc(world: ^ecs.World, mouse_inp: input.Input(input.ButtonCode)) {
-	mpos := input.mouse_position(mouse_inp)
-	is_left_down := input.is_pressed(mouse_inp, input.ButtonCode.Left)
-
-	for arch in ecs.query(world, ui.UI_Node, Button) {
-		nodes := ecs.arch_get_field(arch, ui.UI_Node)
-		buttons := ecs.arch_get_field(arch, Button)
-
-		for i in 0 ..< len(nodes) {
-			node := &nodes[i]
-			btn := &buttons[i]
-
-			// Check bounding box intersection
-			in_bounds :=
-				mpos.x >= node.rect.x &&
-				mpos.x <= node.rect.x + node.rect.w &&
-				mpos.y >= node.rect.y &&
-				mpos.y <= node.rect.y + node.rect.h
-
-			if in_bounds {
-				if is_left_down {
-					node.bg_color = btn.click_color
-				} else {
-					node.bg_color = btn.hover_color
-				}
-			} else {
-				node.bg_color = btn.base_color
-			}
-		}
-	}
 }
 
 // Keyboard input system that highlights grid cells on pressing '1' to '9'
@@ -275,12 +323,15 @@ gesture_scaling_system :: proc(
 	gesture_inp: input.Input(input.Gesture),
 	gamepad_inp: input.Input(input.GamepadAxis),
 ) {
-	scale := input.pinch_scale(gesture_inp)
+	// Pinch scale is a frame-relative delta (defaults to 1.0 when no pinch is updating)
+	pinch_delta := input.pinch_scale(gesture_inp)
 
-	// Incorporate gamepad trigger axis input (Right trigger zooms in, Left trigger zooms out)
+	// Gamepad trigger input is also frame-relative delta
 	rt := input.gamepad_axis(gamepad_inp, .TriggerRight)
 	lt := input.gamepad_axis(gamepad_inp, .TriggerLeft)
-	scale = clamp(scale + (rt - lt) * 0.1, 0.1, 10.0)
+	gamepad_delta := 1.0 + (rt - lt) * 0.1
+
+	frame_scale := pinch_delta * gamepad_delta
 
 	for arch in ecs.query(world, ui.UI_Node, Pinchable_Box) {
 		nodes := ecs.arch_get_field(arch, ui.UI_Node)
@@ -290,8 +341,11 @@ gesture_scaling_system :: proc(
 			node := &nodes[i]
 			box := &boxes[i]
 
-			node.width = {box.base_width * scale, .Pixels}
-			node.height = {box.base_height * scale, .Pixels}
+			// Accumulate frame-relative scaling changes on the component
+			box.scale = clamp(box.scale * frame_scale, 0.1, 10.0)
+
+			node.width = {box.base_width * box.scale, .Pixels}
+			node.height = {box.base_height * box.scale, .Pixels}
 
 			state := ecs.world_get_resource(world, ui.UI_State)
 			if state != nil {
@@ -349,6 +403,89 @@ timer_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_Stat
 	}
 }
 
+// Rotating box system that updates the box's rotation, maps mouse position to local space, and updates color based on slider value
+rotating_box_system :: proc(
+	world: ^ecs.World,
+	showcase_state: params.Res(Showcase_State),
+	mouse_inp: input.Input(input.MouseButtonCode),
+	window_res: params.Res(windowing.Window_Context),
+) {
+	state := showcase_state.ptr
+	if state == nil || window_res.ptr == nil do return
+
+	elapsed := f32(time.duration_seconds(time.tick_since(state.start_time)))
+
+	win_w, win_h: c.int
+	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+
+	cx := f32(win_w) * 0.5
+	cy := f32(win_h) * 0.5
+
+	box_w: f32 = 250.0
+	box_h: f32 = 250.0
+	angle := elapsed * 1.0
+
+	// 1. Update Box Canvas Transform (Rotation & Screen Centering)
+	canvas_trans := ecs.world_get_component(world, state.box_canvas, transform.Transform)
+	if canvas_trans != nil {
+		c_val := linalg.cos(angle)
+		s_val := linalg.sin(angle)
+		canvas_trans.world_matrix = linalg.Matrix4f32 {
+			c_val,
+			-s_val,
+			0.0,
+			cx,
+			s_val,
+			c_val,
+			0.0,
+			cy,
+			0.0,
+			0.0,
+			1.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			1.0,
+		}
+	}
+
+	// 2. Map Screen Mouse Coordinates to Box Local Coordinate Space using the Inverse of VP
+	mpos := input.mouse_position(mouse_inp)
+	camera_vp := ui.ui_projection_matrix(f32(win_w), f32(win_h))
+	local_to_center := linalg.matrix4_translate_f32({-box_w * 0.5, -box_h * 0.5, 0.0})
+	vp := camera_vp * canvas_trans.world_matrix * local_to_center
+	inv_vp := linalg.matrix4_inverse(vp)
+
+	mpos_ndc := twoD.project_point(camera_vp, mpos)
+	mpos_ndc_4 := [4]f32{mpos_ndc.x, mpos_ndc.y, 0.0, 1.0}
+	local_pos_4 := inv_vp * mpos_ndc_4
+	local_x := local_pos_4.x / local_pos_4.w
+	local_y := local_pos_4.y / local_pos_4.w
+
+	input.set_target_mouse_position(mouse_inp, state.box_canvas, {local_x, local_y})
+
+	// 3. Update Box Color from the Slider's value
+	for arch in ecs.query(world, ui.Slider) {
+		sliders := ecs.arch_get_field(arch, ui.Slider)
+		for i in 0 ..< len(sliders) {
+			slider := &sliders[i]
+			// Map slider value to box color (rotating RGB based on value)
+			state.box_color = {
+				slider.value,
+				1.0 - slider.value,
+				0.5 + slider.value * 0.5,
+				0.8, // alpha
+			}
+		}
+	}
+
+	box_node := ecs.world_get_component(world, state.box_canvas, ui.UI_Node)
+	if box_node != nil {
+		box_node.bg_color = state.box_color
+	}
+}
+
 main :: proc() {
 	args := os.args
 	duration := 10 * time.Second
@@ -373,11 +510,19 @@ main :: proc() {
 
 	// Register systems
 	app.app_add_system(&application, app.Startup, setup_system)
-	app.app_add_system(&application, app.Update, button_interaction_system)
 	app.app_add_system(&application, app.Update, keyboard_grid_system)
 	app.app_add_system(&application, app.Update, gesture_scaling_system)
 	app.app_add_system(&application, app.Update, gamepad_showcase_system)
 	app.app_add_system(&application, app.Update, timer_system)
+	app.app_add_system(
+		&application,
+		app.Update,
+		rotating_box_system,
+		before = []rawptr {
+			rawptr(ui.ui_button_interaction_system),
+			rawptr(ui.ui_slider_interaction_system),
+		},
+	)
 
 	app.app_run_schedule(&application, app.Startup)
 

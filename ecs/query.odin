@@ -88,16 +88,6 @@ world_resolve_term :: proc(w: ^World, term: Term) -> typeid {
 	return id
 }
 
-@(private)
-// lifecycle events
-on_add :: proc(t: typeid) -> Term {
-	return {op = .OnAdd, types = slice.clone([]typeid{t}, context.temp_allocator)}
-}
-
-on_rm :: proc(t: typeid) -> Term {
-	return {op = .OnRemove, types = slice.clone([]typeid{t}, context.temp_allocator)}
-}
-on_remove :: on_rm
 
 // require ALL of these types
 and :: proc(types: ..typeid) -> Term {

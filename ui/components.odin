@@ -1,6 +1,7 @@
 package ui
 
 import "../ecs"
+import graphics "../graphics"
 
 UI_Size_Unit :: enum {
 	Pixels,
@@ -142,4 +143,21 @@ anchor_bottomright :: proc() -> Layout_Anchor {
 UI_State :: struct {
 	dirty:             bool,
 	deferred_despawns: [dynamic]ecs.Entity,
+}
+
+UI_Canvas_Render_Mode :: enum {
+	Screen_Space,
+	World_Space,
+}
+
+UI_Canvas :: struct {
+	render_mode:     UI_Canvas_Render_Mode,
+	camera:          ecs.Entity,
+	reference_size:  [2]f32,
+	world_size:      [2]f32,
+}
+
+UI_Canvas_Target :: struct {
+	target:          graphics.Render_Target,
+	batch:           graphics.Batch2D,
 }
