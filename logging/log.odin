@@ -655,7 +655,7 @@ init_log :: proc "contextless" () {
 	}
 
 	log_outputs = make([dynamic]Log_Output, runtime.default_allocator())
-	append(&log_outputs, create_console_output(.Debug, DEFAULT_CONSOLE_FORMAT))
+	append(&log_outputs, create_console_output(logger.lowest_level, DEFAULT_CONSOLE_FORMAT))
 }
 
 @(fini)
@@ -677,7 +677,7 @@ deinit_log :: proc "contextless" () {
 
 // Log a formatted debug message
 debug :: proc(format: string, args: ..any, location := #caller_location) {
-	if !ODIN_DEBUG && !ODIN_TEST {
+	if ODIN_DEBUG == false && ODIN_TEST == false {
 		return
 	}
 	context.logger = logger

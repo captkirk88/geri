@@ -8,6 +8,7 @@ import log "../logging"
 import "../windowing"
 import "base:runtime"
 import "core:fmt"
+import "core:thread"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
 
@@ -176,6 +177,13 @@ render_cleanup_system :: proc(
 	fctx: params.Res(Frame_Context),
 ) {
 	if len(exit_events.events) > 0 {
+		// Wait for any background GIF write threads to complete before shutting down
+		for t in active_threads {
+			thread.join(t)
+			thread.destroy(t)
+		}
+		delete(active_threads)
+
 		custom_fonts_destroy()
 		if batch2d.ptr != nil do destroy_batch2d(batch2d.ptr)
 		if batch3d.ptr != nil do destroy_batch3d(batch3d.ptr)

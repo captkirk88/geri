@@ -3,6 +3,7 @@ package graphics
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import "../image/gif"
 import log "../logging"
 import "../windowing"
 import "base:runtime"
@@ -13,6 +14,7 @@ import qoi "core:image/qoi"
 import tga "core:image/tga"
 import "core:os"
 import "core:strings"
+import "core:thread"
 import stbi "vendor:stb/image"
 import "vendor:wgpu"
 
@@ -37,6 +39,29 @@ screenshot_recording_begin :: proc(w: ^ecs.World, path: string) {
 	})
 }
 
+// List of active background GIF writing threads
+active_threads: [dynamic]^thread.Thread
+
+@(private)
+Gif_Write_Job :: struct {
+	path:   string,
+	width:  int,
+	height: int,
+	frames: [][]byte,
+}
+
+@(private)
+gif_write_worker :: proc(t: ^thread.Thread) {
+	job := (^Gif_Write_Job)(t.data)
+	gif.write(job.path, job.width, job.height, job.frames)
+	for frame in job.frames {
+		delete(frame)
+	}
+	delete(job.frames)
+	delete(job.path)
+	free(job)
+}
+
 screenshot_recording_end :: proc(w: ^ecs.World) {
 	rec := ecs.world_get_resource(w, Screenshot_Recording)
 	if rec != nil {
@@ -49,7 +74,21 @@ screenshot_recording_end :: proc(w: ^ecs.World) {
 			len(rec.frames),
 		)
 		if len(rec.frames) > 0 {
-			write_gif(rec.path, rec.width, rec.height, rec.frames[:])
+			job := new(Gif_Write_Job)
+			job.path = strings.clone(rec.path)
+			job.width = rec.width
+			job.height = rec.height
+
+			job.frames = make([][]byte, len(rec.frames))
+			copy(job.frames, rec.frames[:])
+
+			// Clear frames in rec to prevent the destructor from freeing them
+			clear(&rec.frames)
+
+			t := thread.create(gif_write_worker)
+			t.data = job
+			thread.start(t)
+			append(&active_threads, t)
 		}
 		ecs.world_remove_resource(w, Screenshot_Recording)
 	}
@@ -102,6 +141,17 @@ frame_present_system :: proc(
 	ctx_res: params.Res(Render_Context),
 	fctx_res: params.Res(Frame_Context),
 ) {
+	// Clean up completed background writing threads
+	for i := 0; i < len(active_threads); {
+		t := active_threads[i]
+		if thread.is_done(t) {
+			thread.destroy(t)
+			unordered_remove(&active_threads, i)
+		} else {
+			i += 1
+		}
+	}
+
 	ctx := ctx_res.ptr
 	fctx := fctx_res.ptr
 	if ctx == nil || ctx.device == nil do return
