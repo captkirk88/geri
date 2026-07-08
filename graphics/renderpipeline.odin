@@ -18,6 +18,10 @@ Indexed_Draw_Call :: struct {
 	index_count: u32,
 }
 
+// Create a static GPU buffer with the given usage flags and data, returning the created buffer.
+//
+// The buffer created and queued.
+// The caller is responsible for releasing the buffer when it is no longer needed.
 render_create_static_buffer :: proc(
 	ctx: ^Render_Context,
 	usage: wgpu.BufferUsageFlags,
@@ -35,6 +39,7 @@ render_create_static_buffer :: proc(
 	return buf
 }
 
+// Write data to a GPU buffer using the provided render context and queue
 render_write_buffer :: proc(
 	ctx: ^Render_Context,
 	buffer: wgpu.Buffer,
@@ -46,27 +51,33 @@ render_write_buffer :: proc(
 	wgpu.QueueWriteBuffer(ctx.queue, buffer, offset, data, uint(size))
 }
 
+// Bind buffer resources to a bind group for use in shaders
 render_bind_group_entry_buffer :: proc(
 	binding: u32,
 	buffer: wgpu.Buffer,
 	size: u64,
 	offset: u64 = 0,
 ) -> wgpu.BindGroupEntry {
-	return wgpu.BindGroupEntry {
-		binding = binding,
-		buffer = buffer,
-		offset = offset,
-		size = size,
-	}
+	return wgpu.BindGroupEntry{binding = binding, buffer = buffer, offset = offset, size = size}
 }
 
-render_bind_group_entry_texture :: proc(binding: u32, texture_view: wgpu.TextureView) -> wgpu.BindGroupEntry {
-	return wgpu.BindGroupEntry {
-		binding = binding,
-		textureView = texture_view,
-	}
+// Bind texture resources to a bind group for use in shaders
+render_bind_group_entry_texture :: proc(
+	binding: u32,
+	texture_view: wgpu.TextureView,
+) -> wgpu.BindGroupEntry {
+	return wgpu.BindGroupEntry{binding = binding, textureView = texture_view}
 }
 
+// Bind sampler resources to a bind group for use in shaders
+render_bind_group_entry_sampler :: proc(
+	binding: u32,
+	sampler: wgpu.Sampler,
+) -> wgpu.BindGroupEntry {
+	return wgpu.BindGroupEntry{binding = binding, sampler = sampler}
+}
+
+// Render a single indexed draw call using the provided render pass encoder
 render_draw_indexed_call :: proc(pass: wgpu.RenderPassEncoder, call: Indexed_Draw_Call) {
 	if pass == nil do return
 	if call.pipeline == nil || call.vertex_buf == nil || call.index_buf == nil || call.index_count == 0 do return
@@ -80,6 +91,7 @@ render_draw_indexed_call :: proc(pass: wgpu.RenderPassEncoder, call: Indexed_Dra
 	wgpu.RenderPassEncoderDrawIndexed(pass, call.index_count, 1, 0, 0, 0)
 }
 
+// Render a single indexed draw call using the provided render pass encoder and a bind group created from the provided layout and entries
 render_draw_indexed_with_bind_group :: proc(
 	pass: wgpu.RenderPassEncoder,
 	device: wgpu.Device,
@@ -103,6 +115,7 @@ render_draw_indexed_with_bind_group :: proc(
 	render_draw_indexed_call(pass, call_with_bind_group)
 }
 
+@(tag = "system") // tagged so that users know this is a system and can be added to a schedule
 main_render_system :: proc(
 	ctx_res: params.Res(Render_Context),
 	fctx_res: params.Res(Frame_Context),

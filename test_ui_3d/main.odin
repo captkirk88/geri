@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import "core:c"
 import "core:math"
@@ -612,7 +612,7 @@ main :: proc() {
 		&application,
 		app.Update,
 		sphere_ui_input_system,
-		before = []app.System_Dependency{
+		before = []app.System_Dependency {
 			rawptr(ui.ui_button_interaction_system),
 			rawptr(ui.ui_slider_interaction_system),
 		},
@@ -628,7 +628,7 @@ main :: proc() {
 
 	start_time := time.tick_now()
 	screenshot_taken := false
-	screenshot_time := duration / 2
+	screenshot_time := duration / 4
 
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
