@@ -302,6 +302,37 @@ shader_pass_update_uniforms :: proc(
 }
 
 // destroy_shader_pass releases all WGPU resources owned by the shader pass.
+// shader_module_from_source compiles a wgpu.ShaderModule from a Shader_Source union value.
+// Returns nil if the source variant is unrecognized or compilation fails.
+shader_module_from_source :: proc(device: wgpu.Device, source: Shader_Source) -> wgpu.ShaderModule {
+	switch s in source {
+	case Shader_Source_WGSL:
+		src := wgpu.ShaderSourceWGSL {
+			chain = {sType = .ShaderSourceWGSL},
+			code  = s.code,
+		}
+		desc := wgpu.ShaderModuleDescriptor{nextInChain = &src.chain}
+		return wgpu.DeviceCreateShaderModule(device, &desc)
+	case Shader_Source_SPIRV:
+		src := wgpu.ShaderSourceSPIRV {
+			chain    = {sType = .ShaderSourceSPIRV},
+			codeSize = u32(len(s.code)),
+			code     = raw_data(s.code),
+		}
+		desc := wgpu.ShaderModuleDescriptor{nextInChain = &src.chain}
+		return wgpu.DeviceCreateShaderModule(device, &desc)
+	case Shader_Source_GLSL:
+		src := wgpu.ShaderSourceGLSL {
+			chain = {sType = .ShaderSourceGLSL},
+			stage = s.stage,
+			code  = s.code,
+		}
+		desc := wgpu.ShaderModuleDescriptor{nextInChain = &src.chain}
+		return wgpu.DeviceCreateShaderModule(device, &desc)
+	}
+	return nil
+}
+
 destroy_shader_pass :: proc(pass: ^Shader_Pass) {
 	if pass.render_pipeline != nil {
 		wgpu.RenderPipelineRelease(pass.render_pipeline)

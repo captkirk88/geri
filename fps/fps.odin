@@ -30,6 +30,13 @@ Fps_Batch :: struct {
 	batch: graphics.Batch2D,
 }
 
+// Optional settings for FPS behavior.
+// .Capped uses VSYNC-backed FIFO; .Uncapped requests immediate presentation.
+Fps_Settings :: enum {
+	Capped,
+	Uncapped,
+}
+
 // Returns the current averaged FPS.
 fps_average :: proc(c: ^Fps_Counter) -> f64 {
 	if c.sample_count == 0 do return 0
@@ -56,6 +63,28 @@ fps_tick_system :: proc(fps_res: params.Res(Fps_Counter)) {
 	if c.sample_count < FPS_SAMPLE_COUNT {
 		c.sample_count += 1
 	}
+}
+
+// Applies FPS runtime settings that affect swapchain/present behavior.
+fps_settings_system :: proc(
+	settings_res: params.Res(Fps_Settings),
+	ctx_res: params.Res(graphics.Render_Context),
+) {
+	settings := settings_res.ptr
+	ctx := ctx_res.ptr
+	if settings == nil || ctx == nil || ctx.device == nil || ctx.surface == nil do return
+
+	desired_mode := wgpu.PresentMode.Fifo
+	if settings^ == .Uncapped {
+		desired_mode = .Immediate
+	}
+
+	if ctx.config.presentMode == desired_mode do return
+
+	config := ctx.config
+	config.presentMode = desired_mode
+	wgpu.SurfaceConfigure(ctx.surface, &config)
+	ctx.config = config
 }
 
 // System: runs in PostRender (before frame_present_system) — draws the FPS
@@ -115,7 +144,9 @@ fps_cleanup_system :: proc(
 	}
 }
 
-fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
+// Internal helper: creates the dedicated HUD batch and registers it as a resource.
+@(private)
+fps_plugin_build_impl :: proc(settings: Fps_Settings, plugin: app.Plugin, a: ^app.App) {
 	// Create the dedicated HUD batch. Render_Plugin must have already run.
 	render_ctx := ecs.world_get_resource(&a.world, graphics.Render_Context)
 	if render_ctx == nil || render_ctx.device == nil {
@@ -131,6 +162,7 @@ fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		font_size = 0, // 0 = derive from loaded font's pixel_height
 	}
 	app.app_add_resource(a, counter)
+	app.app_add_resource(a, settings)
 
 	// Load font for Fps overlay
 	font: graphics.Font
@@ -141,6 +173,7 @@ fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		})
 	}
 
+	app.app_add_system(a, app.First, fps_settings_system)
 	app.app_add_system(a, app.First, fps_tick_system)
 
 	// PostRender: runs after main_render_system has submitted the scene batch,
@@ -149,21 +182,39 @@ fps_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		a,
 		app.PostRender,
 		fps_render_system,
-		before = []rawptr{rawptr(graphics.frame_present_system)},
+		before = []app.System_Dependency{rawptr(graphics.frame_present_system)},
 	)
 
 	app.app_add_system(
 		a,
 		app.PostRender,
 		fps_cleanup_system,
-		after = []rawptr{rawptr(graphics.frame_present_system)},
-		before = []rawptr{rawptr(graphics.render_cleanup_system)},
+		after = []app.System_Dependency{rawptr(graphics.frame_present_system)},
+		before = []app.System_Dependency{rawptr(graphics.render_cleanup_system)},
 	)
+}
+
+fps_plugin_build :: proc(settings: Fps_Settings) -> proc(plugin: app.Plugin, a: ^app.App) {
+	build_capped := proc(plugin: app.Plugin, a: ^app.App) {
+		fps_plugin_build_impl(.Capped, plugin, a)
+	}
+
+	build_uncapped := proc(plugin: app.Plugin, a: ^app.App) {
+		fps_plugin_build_impl(.Uncapped, plugin, a)
+	}
+
+	switch settings {
+	case .Uncapped:
+		return build_uncapped
+	case .Capped:
+		return build_capped
+	}
+	return build_capped // default
 }
 
 // Fps_Plugin adds an averaged FPS counter overlay to the top-left of the screen.
 // Must be added AFTER Render_Plugin so the Render_Context resource is available.
 // Requires a graphics.Font resource to be registered (e.g. via font_init in Startup).
-Fps_Plugin :: proc() -> app.Plugin {
-	return app.Plugin{build = fps_plugin_build}
+Fps_Plugin :: proc(init_settings: Fps_Settings = .Capped) -> app.Plugin {
+	return app.Plugin{build = fps_plugin_build(init_settings)}
 }

@@ -29,7 +29,7 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		a,
 		app.Render,
 		ui_render_system,
-		before = []rawptr{rawptr(graphics.main_render_system)},
+		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
 }
 

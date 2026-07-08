@@ -30,6 +30,12 @@ mise bench
 mise test-ui
 ```
 
+### UI On 3D Sphere
+
+```bash
+mise test-ui-3d
+```
+
 ### Shader
 
 ```bash

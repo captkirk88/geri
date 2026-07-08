@@ -26,7 +26,7 @@ Gizmo_Plugin_2D :: proc() -> app.Plugin {
 				a,
 				app.Render,
 				draw_gizmo_2d_system,
-				before = []rawptr{rawptr(g.main_render_system)},
+				before = []app.System_Dependency{rawptr(g.main_render_system)},
 			)
 		}}
 }

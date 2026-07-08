@@ -18,6 +18,28 @@ System_Metadata :: struct {
 	after:  [dynamic]rawptr, // procedure pointers of systems that must run before this one
 }
 
+System_Group :: struct {
+	systems: []rawptr,
+}
+
+System_Dependency :: union {
+	rawptr,
+	System_Group,
+}
+
+flatten_dependencies :: proc(dst: ^[dynamic]rawptr, deps: []System_Dependency) {
+	for dep in deps {
+		switch v in dep {
+		case rawptr:
+			append(dst, v)
+		case System_Group:
+			for s in v.systems {
+				append(dst, s)
+			}
+		}
+	}
+}
+
 Schedule :: struct {
 	systems:           #soa[dynamic]System_Metadata,
 	levels:            [dynamic][dynamic]int,
@@ -59,8 +81,8 @@ schedule_add_system :: proc(
 	w: ^ecs.World,
 	procedure: $T,
 	name := #caller_expression(procedure),
-	before: []rawptr = nil,
-	after: []rawptr = nil,
+	before: []System_Dependency = nil,
+	after: []System_Dependency = nil,
 ) where intrinsics.type_is_proc(T) {
 
 	s := sys.new_system(procedure, w.allocator)
@@ -71,12 +93,8 @@ schedule_add_system :: proc(
 	meta.before = make([dynamic]rawptr, w.allocator)
 	meta.after = make([dynamic]rawptr, w.allocator)
 
-	for b in before {
-		append(&meta.before, b)
-	}
-	for a in after {
-		append(&meta.after, a)
-	}
+	flatten_dependencies(&meta.before, before)
+	flatten_dependencies(&meta.after, after)
 
 	append_soa(&sched.systems, meta)
 	sched.needs_compilation = true
@@ -88,8 +106,8 @@ schedule_add_system_raw :: proc(
 	w: ^ecs.World,
 	system: ^sys.System,
 	name: string = "<composite>",
-	before: []rawptr = nil,
-	after: []rawptr = nil,
+	before: []System_Dependency = nil,
+	after: []System_Dependency = nil,
 ) {
 	meta: System_Metadata
 	meta.system = system
@@ -97,12 +115,8 @@ schedule_add_system_raw :: proc(
 	meta.before = make([dynamic]rawptr, w.allocator)
 	meta.after = make([dynamic]rawptr, w.allocator)
 
-	for b in before {
-		append(&meta.before, b)
-	}
-	for a in after {
-		append(&meta.after, a)
-	}
+	flatten_dependencies(&meta.before, before)
+	flatten_dependencies(&meta.after, after)
 
 	append_soa(&sched.systems, meta)
 	sched.needs_compilation = true
@@ -357,17 +371,13 @@ schedule_run :: proc(w: ^ecs.World, sched: ^Schedule, pool: ^thread.Pool = nil) 
 schedule_modify_system :: proc(
 	sched: ^Schedule,
 	procedure: rawptr,
-	before: []rawptr = nil,
-	after: []rawptr = nil,
+	before: []System_Dependency = nil,
+	after: []System_Dependency = nil,
 ) -> bool {
 	for i in 0 ..< len(sched.systems) {
 		if sched.systems.system[i].procedure == procedure {
-			for b in before {
-				append(&sched.systems.before[i], b)
-			}
-			for a in after {
-				append(&sched.systems.after[i], a)
-			}
+			flatten_dependencies(&sched.systems.before[i], before)
+			flatten_dependencies(&sched.systems.after[i], after)
 			sched.needs_compilation = true
 			return true
 		}

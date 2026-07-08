@@ -499,7 +499,7 @@ main :: proc() {
 		[]app.Plugin {
 			windowing.Window_Plugin(),
 			graphics.Render_Plugin(),
-			fps.Fps_Plugin(),
+			fps.Fps_Plugin(.Uncapped),
 			input.Input_Plugin(),
 			ui.UI_Plugin(),
 		},
@@ -518,7 +518,7 @@ main :: proc() {
 		&application,
 		app.Update,
 		rotating_box_system,
-		before = []rawptr {
+		before = []app.System_Dependency {
 			rawptr(ui.ui_button_interaction_system),
 			rawptr(ui.ui_slider_interaction_system),
 		},

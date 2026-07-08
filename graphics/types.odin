@@ -1,5 +1,7 @@
 package graphics
 
+import "../image/gif"
+import "core:thread"
 import "vendor:wgpu"
 
 // Render_Context manages the global WebGPU handles required to interface with the GPU adapter,
@@ -36,13 +38,17 @@ Screenshot_Request :: struct {
 	format: Screenshot_Format, // Desired image file format.
 }
 
-// Screenshot_Recording manages the state of continuous frame capturing to output an animated GIF.
+// Screenshot_Recording_Path holds the output path while a recording is pending file open.
+Screenshot_Recording_Path :: struct {
+	path: string,
+}
+
+// Screenshot_Recording manages the state of streaming frame capture to an animated GIF file.
+// Frames are written incrementally as they are drawn; no frame accumulation occurs.
 Screenshot_Recording :: struct {
-	path:   string, // Target file system path for the output GIF.
-	frames: [dynamic][]byte, // Slices containing raw RGBA frame buffers.
-	width:  int, // Target width of the frames.
-	height: int, // Target height of the frames.
+	writer: gif.Gif_Writer, // Open GIF writer for streaming frames directly to disk.
 	active: bool, // Whether recording is actively capturing frames.
+	worker_pool: ^thread.Pool,
 }
 
 // Vertex2D represents a standard vertex layout for 2D batch drawing.
@@ -55,6 +61,29 @@ Vertex2D :: struct {
 Vertex3D :: struct {
 	position: [3]f32, // 3D position coordinates (X, Y, Z).
 	color:    [4]f32, // Normalized RGBA color coordinates [0.0 - 1.0].
+}
+
+// Shader_Source_WGSL holds a WGSL shader source string.
+Shader_Source_WGSL :: struct {
+	code: string,
+}
+
+// Shader_Source_SPIRV holds a SPIR-V shader binary as a slice of 32-bit words.
+Shader_Source_SPIRV :: struct {
+	code: []u32,
+}
+
+// Shader_Source_GLSL holds a GLSL shader source string and the target shader stage.
+Shader_Source_GLSL :: struct {
+	code:  string,
+	stage: wgpu.ShaderStage,
+}
+
+// Shader_Source is a tagged union of the supported GPU shader source formats.
+Shader_Source :: union {
+	Shader_Source_WGSL,
+	Shader_Source_SPIRV,
+	Shader_Source_GLSL,
 }
 
 // Shader_Stage represents the logical pipeline stage of a graphics/compute shader.
@@ -122,10 +151,9 @@ Batch3D :: struct {
 
 // A Render_Target wraps an offscreen texture, view, and layout details for rendering.
 Render_Target :: struct {
-	texture:      wgpu.Texture,     // Underlying texture.
+	texture:      wgpu.Texture, // Underlying texture.
 	texture_view: wgpu.TextureView, // Active view of the texture for the render pass.
-	width:        u32,              // Width of the target in pixels.
-	height:       u32,              // Height of the target in pixels.
+	width:        u32, // Width of the target in pixels.
+	height:       u32, // Height of the target in pixels.
 	format:       wgpu.TextureFormat, // Texture color format.
 }
-

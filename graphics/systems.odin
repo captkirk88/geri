@@ -18,6 +18,26 @@ import "core:thread"
 import stbi "vendor:stb/image"
 import "vendor:wgpu"
 
+Gif_Frame_Task_Data :: struct {
+	writer: ^gif.Gif_Writer,
+	pixels: []byte,
+}
+
+gif_frame_worker_proc :: proc(task: thread.Task) {
+	data := cast(^Gif_Frame_Task_Data)task.data
+	if data == nil {
+		return
+	}
+	defer free(data, context.allocator)
+	if data.writer == nil {
+		delete(data.pixels)
+		return
+	}
+
+	gif.write_frame(data.writer, data.pixels)
+	delete(data.pixels)
+}
+
 handle_resize_system :: proc() {
 }
 
@@ -26,71 +46,35 @@ capture_screenshot :: proc(w: ^ecs.World, path: string, format: Screenshot_Forma
 }
 
 screenshot_recording_begin :: proc(w: ^ecs.World, path: string) {
+	// Width and height are not known until the first frame is captured;
+	// the file is opened lazily in frame_present_system on the first recorded frame.
 	rec := Screenshot_Recording {
-		path   = path,
-		frames = make([dynamic][]byte),
+		writer = gif.Gif_Writer{file = nil},
 		active = true,
 	}
-	ecs.world_add_resource(w, rec, proc(r: ^Screenshot_Recording, alloc: runtime.Allocator) {
-		for frame in r.frames {
-			delete(frame)
-		}
-		delete(r.frames)
-	})
-}
-
-// List of active background GIF writing threads
-active_threads: [dynamic]^thread.Thread
-
-@(private)
-Gif_Write_Job :: struct {
-	path:   string,
-	width:  int,
-	height: int,
-	frames: [][]byte,
-}
-
-@(private)
-gif_write_worker :: proc(t: ^thread.Thread) {
-	job := (^Gif_Write_Job)(t.data)
-	gif.write(job.path, job.width, job.height, job.frames)
-	for frame in job.frames {
-		delete(frame)
+	rec.worker_pool = new(thread.Pool, context.allocator)
+	if rec.worker_pool != nil {
+		thread.pool_init(rec.worker_pool, context.allocator, 1)
+		thread.pool_start(rec.worker_pool)
 	}
-	delete(job.frames)
-	delete(job.path)
-	free(job)
+	// Store the path in a resource so frame_present_system can open the writer.
+	ecs.world_add_resource(w, Screenshot_Recording_Path{path = path})
+	ecs.world_add_resource(w, rec)
 }
 
 screenshot_recording_end :: proc(w: ^ecs.World) {
 	rec := ecs.world_get_resource(w, Screenshot_Recording)
 	if rec != nil {
 		rec.active = false
-		log.debug(
-			"screenshot_recording_end: path=%s, width=%d, height=%d, frame_count=%d",
-			rec.path,
-			rec.width,
-			rec.height,
-			len(rec.frames),
-		)
-		if len(rec.frames) > 0 {
-			job := new(Gif_Write_Job)
-			job.path = strings.clone(rec.path)
-			job.width = rec.width
-			job.height = rec.height
-
-			job.frames = make([][]byte, len(rec.frames))
-			copy(job.frames, rec.frames[:])
-
-			// Clear frames in rec to prevent the destructor from freeing them
-			clear(&rec.frames)
-
-			t := thread.create(gif_write_worker)
-			t.data = job
-			thread.start(t)
-			append(&active_threads, t)
+		if rec.worker_pool != nil {
+			thread.pool_join(rec.worker_pool)
+			thread.pool_destroy(rec.worker_pool)
+			free(rec.worker_pool, context.allocator)
+			rec.worker_pool = nil
 		}
+		gif.close(&rec.writer)
 		ecs.world_remove_resource(w, Screenshot_Recording)
+		ecs.world_remove_resource(w, Screenshot_Recording_Path)
 	}
 }
 
@@ -141,17 +125,6 @@ frame_present_system :: proc(
 	ctx_res: params.Res(Render_Context),
 	fctx_res: params.Res(Frame_Context),
 ) {
-	// Clean up completed background writing threads
-	for i := 0; i < len(active_threads); {
-		t := active_threads[i]
-		if thread.is_done(t) {
-			thread.destroy(t)
-			unordered_remove(&active_threads, i)
-		} else {
-			i += 1
-		}
-	}
-
 	ctx := ctx_res.ptr
 	fctx := fctx_res.ptr
 	if ctx == nil || ctx.device == nil do return
@@ -279,9 +252,34 @@ frame_present_system :: proc(
 				}
 
 				if rec != nil && rec.active {
-					rec.width = int(width)
-					rec.height = int(height)
-					append(&rec.frames, pixels)
+					// Open the GIF writer on the first captured frame (dimensions now known)
+					if rec.writer.file == nil {
+						rec_path := ecs.world_get_resource(world, Screenshot_Recording_Path)
+						if rec_path != nil {
+							writer, ok := gif.open(rec_path.path, int(width), int(height))
+							if ok {
+								rec.writer = writer
+							}
+						}
+					}
+					if rec.writer.file != nil {
+						if rec.worker_pool != nil {
+							job_pixels := make([]byte, len(pixels))
+							copy(job_pixels, pixels)
+							job := new(Gif_Frame_Task_Data, context.allocator)
+							job.writer = &rec.writer
+							job.pixels = job_pixels
+							thread.pool_add_task(
+								rec.worker_pool,
+								context.allocator,
+								gif_frame_worker_proc,
+								job,
+							)
+						} else {
+							gif.write_frame(&rec.writer, pixels)
+						}
+					}
+					delete(pixels)
 				} else {
 					delete(pixels)
 				}

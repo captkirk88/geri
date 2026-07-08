@@ -91,7 +91,12 @@ test_explicit_ordering :: proc(t: ^testing.T) {
 		}
 	}
 
-	app_add_system(&app, Update, sys_second, after = []rawptr{rawptr(sys_first)})
+	app_add_system(
+		&app,
+		Update,
+		sys_second,
+		after = []System_Dependency{rawptr(sys_first)},
+	)
 	app_add_system(&app, Update, sys_first)
 
 	app_run_schedule(&app, Update)
@@ -149,10 +154,14 @@ test_render_schedule_main_thread :: proc(t: ^testing.T) {
 	app := app_init()
 	defer app_destroy(&app)
 
-	Render_Label : Schedule_Label : "MyCustomRenderSchedule"
+	Render_Label: Schedule_Label : "MyCustomRenderSchedule"
 
-	My_Res_A :: struct { value: int }
-	My_Res_B :: struct { value: int }
+	My_Res_A :: struct {
+		value: int,
+	}
+	My_Res_B :: struct {
+		value: int,
+	}
 
 	ecs.world_add_resource(&app.world, My_Res_A{10})
 	ecs.world_add_resource(&app.world, My_Res_B{20})
@@ -203,7 +212,12 @@ test_modify_system :: proc(t: ^testing.T) {
 	app_add_system(&app, Update, sys_first)
 
 	// Modify sys_second to run after sys_first
-	ok := app_modify_system(&app, Update, rawptr(sys_second), after = []rawptr{rawptr(sys_first)})
+	ok := app_modify_system(
+		&app,
+		Update,
+		rawptr(sys_second),
+		after = []System_Dependency{rawptr(sys_first)},
+	)
 	testing.expect(t, ok, "app_modify_system should return true for registered system")
 
 	app_run_schedule(&app, Update)
@@ -219,5 +233,3 @@ test_modify_system :: proc(t: ^testing.T) {
 		delete(retrieved_ctx.order)
 	}
 }
-
-

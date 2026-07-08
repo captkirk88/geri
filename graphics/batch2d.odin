@@ -4,7 +4,7 @@ import "../ecs/params"
 import "core:mem"
 import "vendor:wgpu"
 
-SHADER_2D :: `
+DEFAULT_SHADER_2D :: `
 struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
@@ -30,21 +30,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 `
 
 // init_batch2d initializes a 2D batching context, creating CPU dynamic arrays
-// and the default WGPU Render Pipeline.
-init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat) -> Batch2D {
+// and the default WGPU Render Pipeline. An optional shader source can be provided
+// to override the built-in default WGSL shader.
+init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Shader_Source = nil) -> Batch2D {
 	batch := Batch2D{}
 	batch.vertices = make([dynamic]Vertex2D)
 	batch.indices = make([dynamic]u32)
 
 	// Shader module
-	shader_source := wgpu.ShaderSourceWGSL {
-		chain = {sType = .ShaderSourceWGSL},
-		code = SHADER_2D,
+	effective_source: Shader_Source
+	if source != nil {
+		effective_source = source
+	} else {
+		effective_source = Shader_Source_WGSL{code = DEFAULT_SHADER_2D}
 	}
-	shader_desc := wgpu.ShaderModuleDescriptor {
-		nextInChain = &shader_source.chain,
-	}
-	shader := wgpu.DeviceCreateShaderModule(device, &shader_desc)
+	shader := shader_module_from_source(device, effective_source)
 	defer wgpu.ShaderModuleRelease(shader)
 
 	// Pipeline Layout
@@ -202,19 +202,18 @@ batch2d_draw_buffers :: proc(batch: ^Batch2D, pass: wgpu.RenderPassEncoder, inde
 		}
 	}
 
-	wgpu.RenderPassEncoderSetPipeline(pass, pipeline)
-	
-	// Bind custom uniforms at @group(0) if present
-	if bind_group != nil {
-		wgpu.RenderPassEncoderSetBindGroup(pass, 0, bind_group, nil)
-	}
-
 	vert_size := u64(len(batch.vertices) * size_of(Vertex2D))
 	if vert_size == 0 do vert_size = u64(batch.vert_buf_cap)
-	
-	wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, batch.vertex_buf, 0, vert_size)
-	wgpu.RenderPassEncoderSetIndexBuffer(pass, batch.index_buf, .Uint32, 0, u64(batch.ind_buf_cap))
-	wgpu.RenderPassEncoderDrawIndexed(pass, index_count, 1, 0, 0, 0)
+	call := Indexed_Draw_Call {
+		pipeline = pipeline,
+		bind_group = bind_group,
+		vertex_buf = batch.vertex_buf,
+		vertex_size = vert_size,
+		index_buf = batch.index_buf,
+		index_size = u64(batch.ind_buf_cap),
+		index_count = index_count,
+	}
+	render_draw_indexed_call(pass, call)
 }
 
 // batch2d_flush prepares WGPU buffers with the current CPU vertices, draws them,
@@ -253,7 +252,9 @@ batch2d_run_compute :: proc(
 	if batch.vertex_buf == nil || batch.index_buf == nil do return
 
 	// Check if bind group needs to be created or recreated due to buffer reallocation
-	if pass.bind_group == nil || pass.last_vertex_buf != batch.vertex_buf || pass.last_index_buf != batch.index_buf {
+	if pass.bind_group == nil ||
+	   pass.last_vertex_buf != batch.vertex_buf ||
+	   pass.last_index_buf != batch.index_buf {
 		if pass.bind_group != nil {
 			wgpu.BindGroupRelease(pass.bind_group)
 		}
@@ -266,31 +267,31 @@ batch2d_run_compute :: proc(
 
 		entries[0] = {
 			binding = 0,
-			buffer = batch.vertex_buf,
-			offset = 0,
-			size = u64(batch.vert_buf_cap),
+			buffer  = batch.vertex_buf,
+			offset  = 0,
+			size    = u64(batch.vert_buf_cap),
 		}
 		entries[1] = {
 			binding = 1,
-			buffer = batch.index_buf,
-			offset = 0,
-			size = u64(batch.ind_buf_cap),
+			buffer  = batch.index_buf,
+			offset  = 0,
+			size    = u64(batch.ind_buf_cap),
 		}
 
 		if pass.uniform_buf != nil {
 			entry_count = 3
 			entries[2] = {
 				binding = 2,
-				buffer = pass.uniform_buf,
-				offset = 0,
-				size = (pass.uniform_size + 255) & ~u64(255),
+				buffer  = pass.uniform_buf,
+				offset  = 0,
+				size    = (pass.uniform_size + 255) & ~u64(255),
 			}
 		}
 
 		bg_desc := wgpu.BindGroupDescriptor {
-			layout = pass.bind_group_layout,
+			layout     = pass.bind_group_layout,
 			entryCount = uint(entry_count),
-			entries = &entries[0],
+			entries    = &entries[0],
 		}
 		pass.bind_group = wgpu.DeviceCreateBindGroup(ctx.device, &bg_desc)
 		pass.last_vertex_buf = batch.vertex_buf
@@ -307,7 +308,12 @@ batch2d_run_compute :: proc(
 
 	wgpu.ComputePassEncoderSetPipeline(compute_pass, pass.compute_pipeline)
 	wgpu.ComputePassEncoderSetBindGroup(compute_pass, 0, pass.bind_group, nil)
-	wgpu.ComputePassEncoderDispatchWorkgroups(compute_pass, workgroups_x, workgroups_y, workgroups_z)
+	wgpu.ComputePassEncoderDispatchWorkgroups(
+		compute_pass,
+		workgroups_x,
+		workgroups_y,
+		workgroups_z,
+	)
 }
 
 // batch2d_add_shader_pass registers a custom shader pass into the batch, returning its index.

@@ -109,8 +109,8 @@ app_add_system :: proc(
 	schedule_label: Schedule_Label,
 	procedure: $T,
 	name := #caller_expression(procedure),
-	before: []rawptr = nil,
-	after: []rawptr = nil,
+	before: []System_Dependency = nil,
+	after: []System_Dependency = nil,
 ) where intrinsics.type_is_proc(T) {
 	sync.mutex_lock(&app.mutex)
 	if schedule_label not_in app.schedules {
@@ -128,8 +128,8 @@ app_add_system_raw :: proc(
 	schedule_label: Schedule_Label,
 	system: ^sys.System,
 	name: string = "<composite>",
-	before: []rawptr = nil,
-	after: []rawptr = nil,
+	before: []System_Dependency = nil,
+	after: []System_Dependency = nil,
 ) {
 	sync.mutex_lock(&app.mutex)
 	if schedule_label not_in app.schedules {
@@ -147,8 +147,8 @@ app_modify_system :: proc(
 	app: ^App,
 	schedule_label: Schedule_Label,
 	procedure: rawptr,
-	before: []rawptr = nil,
-	after: []rawptr = nil,
+	before: []System_Dependency = nil,
+	after: []System_Dependency = nil,
 ) -> bool {
 	sync.mutex_lock(&app.mutex)
 	sched, ok := app.schedules[schedule_label]

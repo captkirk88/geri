@@ -25,6 +25,15 @@ run = [
   "odin run test_ui {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui.exe -- 10s",
 ]
 
+[tasks.test-ui-3d]
+description = "Run the sphere-mapped UI canvas showcase on the main thread"
+interactive = true
+depends = ["build-odin", "copy_vendor_libs"]
+run = [
+  { task = "make_build" },
+  "odin run test_ui_3d {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui_3d.exe",
+]
+
 [tasks.test-render]
 description = "Run the graphics render pipeline test on the main thread"
 interactive = true

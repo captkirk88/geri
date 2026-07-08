@@ -370,53 +370,44 @@ gif_lzw_encode :: proc(pixels: []byte, state: ^Gif_Lzw) {
 	append(&state.data, 0) // Write the sub-block terminator (0 size block) to mark end of LZW stream
 }
 
-// TODO parallize writing each frame
-// Writes a series of RGBA frames to a GIF file at the specified path.
-write :: proc(path: string, width, height: int, frames: [][]byte) -> bool {
-	log.debug(
-		"write_gif start: path=%s, width=%d, height=%d, frames=%d",
-		path,
-		width,
-		height,
-		len(frames),
-	)
-	defer log.debug("write_gif end")
+// Gif_Writer holds the open file handle and fixed dimensions for incremental frame writing.
+Gif_Writer :: struct {
+	file:    ^os.File,
+	width:   int,
+	height:  int,
+	w_bytes: [2]byte,
+	h_bytes: [2]byte,
+}
+
+// open creates and initialises a GIF file for streaming, writing the GIF header and the
+// Netscape 2.0 loop block. Call write_frame for each frame, then close to finalise.
+open :: proc(path: string, width, height: int) -> (writer: Gif_Writer, ok: bool) {
 	f, err := os.open(path, {.Write, .Create, .Trunc})
 	if err != nil {
-		log.error("os.open failed with error: %v", err)
-		return false
+		log.error("failed: %v", err)
+		return {}, false
 	}
-	// Close file descriptor upon function exit
-	defer os.close(f)
 
-	// 1. Write the GIF Header
-	// "GIF89a" specifies version 89a, which supports animation and Graphic Control Extensions.
+	writer.file = f
+	writer.width = width
+	writer.height = height
+	writer.w_bytes = [2]byte{byte(width & 0xFF), byte((width >> 8) & 0xFF)}
+	writer.h_bytes = [2]byte{byte(height & 0xFF), byte((height >> 8) & 0xFF)}
+
+	// 1. Write the GIF Header ("GIF89a")
 	os.write(f, []byte{'G', 'I', 'F', '8', '9', 'a'})
 
-	// Split 16-bit width and height dimensions into little-endian byte arrays (2 bytes each).
-	w_bytes := [2]byte{byte(width & 0xFF), byte((width >> 8) & 0xFF)}
-	h_bytes := [2]byte{byte(height & 0xFF), byte((height >> 8) & 0xFF)}
+	// Logical Screen Descriptor:
+	// packed_fields 0x70 = no GCT, 8-bit color resolution, unsorted, GCT size 0.
+	os.write(f, writer.w_bytes[:])
+	os.write(f, writer.h_bytes[:])
+	os.write(f, []byte{0x70, 0, 0})
 
-	// Logical Screen Descriptor packed fields byte (0x70 = binary 01110000):
-	// - Bit 7 = 0: No Global Color Table (we use Local Color Tables per frame to support unique color sets).
-	// - Bits 6-4 = 111 (7): 8 bits of color resolution.
-	// - Bit 3 = 0: Sorted palette flag is disabled.
-	// - Bits 2-0 = 000 (0): Size of Global Color Table (0 since GCT flag is 0).
-	packed_fields := byte(0x70)
-
-	os.write(f, w_bytes[:])
-	os.write(f, h_bytes[:])
-	// Logical Screen Descriptor packed fields, followed by:
-	// - Background Color Index (0)
-	// - Pixel Aspect Ratio (0, which defaults to 1:1 square pixels)
-	os.write(f, []byte{packed_fields, 0, 0})
-
-	// 2. Write the Application Extension Block (Netscape 2.0 Loop Extension)
-	// This instructs viewers/browsers to loop the animation.
+	// 2. Netscape 2.0 Application Extension (loop forever)
 	loop_block := []byte {
-		0x21, // Extension Introducer (marks the start of an extension block)
-		0xFF, // Application Extension Label
-		0x0B, // Block Size: 11 bytes (length of application identifier string)
+		0x21,
+		0xFF,
+		0x0B,
 		'N',
 		'E',
 		'T',
@@ -427,99 +418,94 @@ write :: proc(path: string, width, height: int, frames: [][]byte) -> bool {
 		'E',
 		'2',
 		'.',
-		'0', // Application Identifier
-		0x03, // Sub-block Size: 3 bytes
-		0x01, // Sub-block ID: 1 (indicates that loop count data follows)
+		'0',
+		0x03,
+		0x01,
 		0x00,
-		0x00, // Loop count: 0 (unsigned 16-bit little-endian value, 0 means repeat forever)
-		0x00, // Block Terminator (marks the end of the loop block)
+		0x00,
+		0x00,
 	}
 	os.write(f, loop_block)
 
-	// Write each frame to the GIF
-	for frame_data in frames {
-		palette: [256][3]byte
-		quantize_neuquant(frame_data, &palette, 256)
-		indexed := dither_and_map_frame(frame_data, width, height, palette)
-		defer delete(indexed)
+	return writer, true
+}
 
-		// Delay time between frames in centiseconds (1/100 of a second).
-		// A delay of 2 centiseconds translates to 50 frames per second.
-		delay := u16(2)
-		delay_lo := byte(delay & 0xFF)
-		delay_hi := byte((delay >> 8) & 0xFF)
+// write_frame encodes and appends a single RGBA frame to an open Gif_Writer.
+write_frame :: proc(w: ^Gif_Writer, rgba: []byte) {
+	palette: [256][3]byte
+	quantize_neuquant(rgba, &palette, 256)
+	indexed := dither_and_map_frame(rgba, w.width, w.height, palette)
+	defer delete(indexed)
 
-		// 3. Write Graphic Control Extension (GCE)
-		// Controls transparency and frame rendering/disposal settings.
-		gce := []byte {
-			0x21, // Extension Introducer
-			0xF9, // Graphic Control Label
-			0x04, // Block Size: 4 bytes
-			0x04, // Packed Fields (0x04 = binary 00000100):
-			// - Bits 7-5: Reserved (000)
-			// - Bits 4-2: Disposal Method (001 = 1 = "Do not dispose" / overlay on top of last frame)
-			// - Bit 1: User Input Flag (0 = disabled)
-			// - Bit 0: Transparent Color Flag (0 = disabled)
-			delay_lo, // Delay time low byte
-			delay_hi, // Delay time high byte
-			0, // Transparent Color Index (0 since transparency flag is disabled)
-			0, // Block Terminator (0)
-		}
-		os.write(f, gce)
+	// Delay: 2 centiseconds = 50 fps
+	delay := u16(2)
+	delay_lo := byte(delay & 0xFF)
+	delay_hi := byte((delay >> 8) & 0xFF)
 
-		// Image Descriptor Packed Fields byte (0x87 = binary 10000111):
-		// - Bit 7 = 1: Local Color Table Flag (Local palette is present for this frame).
-		// - Bit 6 = 0: Interlace Flag (0 = sequential layout, 1 = interlaced).
-		// - Bit 5 = 0: Sorted palette flag is disabled.
-		// - Bits 4-3 = 00: Reserved bits.
-		// - Bits 2-0 = 111 (7): Size of Local Color Table (7 represents 2^(7+1) = 256 colors).
-		id_packed := byte(0x87)
-
-		// 4. Write Image Descriptor Block
-		// Specifies the frame boundaries and position on the logical screen.
-		id := []byte {
-			0x2C, // Image Separator (always ',')
-			0,
-			0, // Image Left position (0)
-			0,
-			0, // Image Top position (0)
-			w_bytes[0], // Frame Width low byte
-			w_bytes[1], // Frame Width high byte
-			h_bytes[0], // Frame Height low byte
-			h_bytes[1], // Frame Height high byte
-			id_packed, // Packed layout and color table options
-		}
-		os.write(f, id)
-
-		// 5. Write the Local Color Table (Palette)
-		// Formatted as 256 consecutive RGB triplets (768 bytes total).
-		lct_buf := make([]byte, 256 * 3)
-		defer delete(lct_buf)
-		for p in 0 ..< 256 {
-			lct_buf[p * 3 + 0] = palette[p][0] // Red
-			lct_buf[p * 3 + 1] = palette[p][1] // Green
-			lct_buf[p * 3 + 2] = palette[p][2] // Blue
-		}
-		os.write(f, lct_buf)
-
-		// 6. Write LZW Minimum Code Size
-		// The LZW encoder starts with a base code size of 8 bits for color palettes.
-		os.write(f, []byte{8})
-
-		// Initialize LZW writer state
-		w: Gif_Lzw
-		w.data = make([dynamic]byte, 0, 1024)
-		defer delete(w.data)
-		w.numBits = 9 // Initial LZW code width is min_code_size (8) + 1 = 9 bits.
-
-		// Compress and write LZW stream blocks
-		gif_lzw_encode(indexed, &w)
-
-		os.write(f, w.data[:])
+	// 3. Graphic Control Extension
+	gce := []byte {
+		0x21, // Extension Introducer
+		0xF9, // Graphic Control Label
+		0x04, // Block Size: 4 bytes
+		0x04, // Packed Fields: disposal = do-not-dispose, no transparency
+		delay_lo,
+		delay_hi,
+		0, // Transparent Color Index (unused)
+		0, // Block Terminator
 	}
+	os.write(w.file, gce)
 
-	// 7. Write the GIF Trailer (0x3B = ';')
-	// Marks the end of the GIF file.
-	os.write(f, []byte{0x3B})
+	// 4. Image Descriptor (0x87 = local color table present, 256 colors)
+	id := []byte {
+		0x2C, // Image Separator
+		0,
+		0, // Left
+		0,
+		0, // Top
+		w.w_bytes[0],
+		w.w_bytes[1], // Width
+		w.h_bytes[0],
+		w.h_bytes[1], // Height
+		0x87, // Packed: LCT flag set, LCT size = 7 (2^8 = 256 colors)
+	}
+	os.write(w.file, id)
+
+	// 5. Local Color Table
+	lct_buf := make([]byte, 256 * 3)
+	defer delete(lct_buf)
+	for p in 0 ..< 256 {
+		lct_buf[p * 3 + 0] = palette[p][0]
+		lct_buf[p * 3 + 1] = palette[p][1]
+		lct_buf[p * 3 + 2] = palette[p][2]
+	}
+	os.write(w.file, lct_buf)
+
+	// 6. LZW Minimum Code Size + compressed image data
+	os.write(w.file, []byte{8})
+	lzw: Gif_Lzw
+	lzw.data = make([dynamic]byte, 0, 1024)
+	defer delete(lzw.data)
+	lzw.numBits = 9
+	gif_lzw_encode(indexed, &lzw)
+	os.write(w.file, lzw.data[:])
+}
+
+// close writes the GIF trailer and closes the file.
+close :: proc(w: ^Gif_Writer) {
+	if w.file != nil {
+		os.write(w.file, []byte{0x3B}) // GIF Trailer
+		os.close(w.file)
+		w.file = nil
+	}
+}
+
+// write encodes all frames to a GIF file in one call. Convenience wrapper around open/write_frame/close.
+write :: proc(path: string, width, height: int, frames: [][]byte) -> bool {
+	writer, ok := open(path, width, height)
+	if !ok do return false
+	for frame in frames {
+		write_frame(&writer, frame)
+	}
+	close(&writer)
 	return true
 }

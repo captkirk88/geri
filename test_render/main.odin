@@ -297,7 +297,11 @@ main :: proc() {
 	}
 
 	application := app.app_init(
-		[]app.Plugin{windowing.Window_Plugin(), graphics.Render_Plugin(), fps.Fps_Plugin()},
+		[]app.Plugin {
+			windowing.Window_Plugin(),
+			graphics.Render_Plugin(),
+			fps.Fps_Plugin(.Uncapped),
+		},
 	)
 	defer {
 		app.app_destroy(&application)
