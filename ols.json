@@ -1,60 +1,20 @@
 {
-    "$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
-    "enable_document_symbols": true,
-    "enable_hover": true,
-    "enable_snippets": true,
-    "enable_comp_lit_signature_help_use_docs": true,
-    "enable_checker_only_saved": true,
-    "enable_code_action_invert_if": true,
-    "struct_fields_underscore_visibility": "file",
-    "enable_inlay_hints_implicit_return": true,
-    "enable_inlay_hints_optional_result": true,
-    "enable_fake_methods": true,
-    "checker_args": "-vet-style",
-    "collections": [
-        {
-            "name": "ecs",
-            "path": "src/ecs"
-        },
-        {
-            "name": "libs",
-            "path": "vendor"
-        },
-        {
-            "name": "logging",
-            "path": "src/logging"
-        },
-        {
-            "name": "reflect",
-            "path": "src/reflect"
-        },
-        {
-            "name": "benchmark",
-            "path": "src/benchmark"
-        },
-        {
-            "name": "os_geri",
-            "path": "src/os"
-        },
-        {
-            "name": "specs",
-            "path": "src/specs"
-        },
-        {
-            "name": "transform",
-            "path": "src/transform"
-        },
-        {
-            "name": "camera",
-            "path": "src/camera"
-        },
-        {
-            "name": "fps",
-            "path": "src/fps"
-        },
-        {
-            "name": "graphics",
-            "path": "src/graphics"
-        }
-    ]
+	"$schema": "https://raw.githubusercontent.com/DanielGavin/ols/master/misc/ols.schema.json",
+	"enable_document_symbols": true,
+	"enable_hover": true,
+	"enable_snippets": true,
+	"enable_comp_lit_signature_help_use_docs": true,
+	"enable_checker_only_saved": true,
+	"enable_code_action_invert_if": true,
+	"struct_fields_underscore_visibility": "file",
+	"enable_inlay_hints_implicit_return": true,
+	"enable_inlay_hints_optional_result": true,
+	"enable_fake_methods": true,
+	"checker_args": "-vet-style",
+	"collections": [
+		{
+			"name": "libs",
+			"path": "vendor"
+		}
+	]
 }
