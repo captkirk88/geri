@@ -553,9 +553,9 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 	}
 
 	sys_audio :: proc(query: params.Query(struct {
-				sound:  Sound,
-				pos:    Position,
-				not_tf: params.Without(Transform),
+				_: Sound,
+				_: Position,
+				_: params.Without(Transform),
 			})) {
 		for arch in params.query(query) {
 			sound := ecs.arch_get_field(arch, Sound)

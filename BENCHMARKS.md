@@ -9,11 +9,11 @@
 
 | Benchmark | Elapsed | Runs | Average | Bytes |
 | :--- | :--- | :--- | :--- | :--- |
-| Spawn Entities | 22.974 ms | 1000000 | 22.974 ns/run | 28.00MiB |
-| Add Component | 556.761 ms | 1000000 | 556.761 ns/run | 3.42KiB |
-| Add Component Bulk (1000000) | 856.733 ms | 1000 | 856.733 us/run | 32.00MiB |
-| Query System (1000000) | 234.968 ms | 1000 | 234.968 us/run | 144B |
-| Systems Runner | 142.400 us | 1000 | 142.400 ns/run | 16.37KiB |
-| Scheduler 7 labels, 100 systems, 100k entities | 1.080 s | 100 | 10.801 ms/run | 63.97KiB |
-| Serialize/Patch Entity | 13.039 ms | 1000 | 13.039 us/run | 290B |
-| Serialize/Deserialize Resources | 11.566 ms | 1000 | 11.566 us/run | 160B |
+| Spawn Entities | 20.205 ms | 1000000 | 20.205 ns/run | 28.00MiB |
+| Add Component | 530.885 ms | 1000000 | 530.885 ns/run | 3.42KiB |
+| Add Component Bulk (1000000) | 775.958 ms | 1000 | 775.958 us/run | 32.00MiB |
+| Query System (1000000) | 256.842 ms | 1000 | 256.842 us/run | 144B |
+| Systems Runner | 125.900 us | 1000 | 125.900 ns/run | 16.43KiB |
+| Scheduler 7 labels, 100 systems, 100k entities | 995.351 ms | 100 | 9.954 ms/run | 63.53KiB |
+| Serialize/Patch Entity | 12.829 ms | 1000 | 12.829 us/run | 290B |
+| Serialize/Deserialize Resources | 11.250 ms | 1000 | 11.250 us/run | 268B |

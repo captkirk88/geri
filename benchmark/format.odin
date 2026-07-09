@@ -1,5 +1,6 @@
 package benchmark
 
+import "../specs"
 import "base:runtime"
 import "core:fmt"
 import "core:image"
@@ -9,7 +10,6 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:time"
-import "specs:."
 
 format_bytes :: proc(bytes: int) -> string {
 	if bytes <= 0 do return "-"

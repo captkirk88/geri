@@ -59,7 +59,7 @@ env = { BENCH_FORMAT = "{{ env.BENCH_FORMAT | default(value='markdown;graph') }}
 depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  "odin test src/benches {{vars.vet}} {{vars.target}} {{vars.test}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
+  "odin test benches {{vars.vet}} {{vars.target}} {{vars.test}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
 ]
 
 [tasks.build]
