@@ -38,6 +38,14 @@ In :: struct($T: typeid) {
 	value: T,
 }
 
+// Local is unique to the system that uses it
+// TODO
+Local :: struct($T: typeid) {
+	value: ^T,
+	_hash: u64,
+}
+
+// Trigger when a component is added to any entity
 OnAdded :: struct($T: typeid) {
 	entities:    []ecs.Entity,
 	_cursor:     int,
@@ -45,6 +53,7 @@ OnAdded :: struct($T: typeid) {
 	_generation: int,
 }
 
+// Trigger when a component is removed from any entity
 OnRemoved :: struct($T: typeid) {
 	entities:    []ecs.Entity,
 	_cursor:     int,
@@ -52,6 +61,7 @@ OnRemoved :: struct($T: typeid) {
 	_generation: int,
 }
 
+// Query but only expects 1 result
 Single :: struct($T: typeid) {
 	entity:   ecs.Entity,
 	value:    ^T,

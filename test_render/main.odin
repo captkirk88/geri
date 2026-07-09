@@ -326,7 +326,7 @@ main :: proc() {
 		&application,
 		app.Render,
 		draw_circles_system,
-		before = []rawptr{rawptr(main_render_system)},
+		before = []app.System_Dependency{rawptr(main_render_system)},
 	)
 
 	app.app_run_schedule(&application, app.Startup)

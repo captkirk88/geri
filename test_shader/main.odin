@@ -150,6 +150,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 `
 
+@(tag = "system")
 setup_system :: proc(
 	commands: params.Commands,
 	render_ctx_res: params.Res(graphics.Render_Context),
@@ -402,14 +403,13 @@ main :: proc() {
 		&application,
 		app.Render,
 		draw_shader_system,
-		after = []rawptr{rawptr(graphics.main_render_system)},
+		after = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
 	app.app_add_system(
 		&application,
-		app.PostRender,
+		app.Last,
 		cleanup_shader_system,
-		after = []rawptr{rawptr(graphics.frame_present_system)},
-		before = []rawptr{rawptr(graphics.render_cleanup_system)},
+		//before = []app.System_Dependency{rawptr(graphics.render_cleanup_system)},
 	)
 
 	app.app_run_schedule(&application, app.Startup)
@@ -417,7 +417,7 @@ main :: proc() {
 
 	start_time := time.tick_now()
 	screenshot_taken := false
-	screenshot_time := duration / 2
+	screenshot_time := duration / 4
 
 	if record_gif {
 		graphics.screenshot_recording_begin(&application.world, "test_shader_animation.gif")

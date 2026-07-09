@@ -52,6 +52,7 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	app.app_add_system(a, app.PostUpdate, window_cleanup_system)
 }
 
+@(tag = "system")
 window_cleanup_system :: proc(
 	exit_events: params.EventReader(app.App_Exit_Event),
 	window_ctx: params.Res(Window_Context),

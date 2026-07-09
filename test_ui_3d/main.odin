@@ -277,6 +277,7 @@ build_sphere_ui_renderer :: proc(
 	return r, true
 }
 
+@(tag = "system")
 setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.Render_Context)) {
 	if render_ctx.ptr == nil || render_ctx.ptr.device == nil do return
 
@@ -429,6 +430,7 @@ setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.
 	)
 }
 
+@(tag = "system")
 sphere_ui_input_system :: proc(
 	world: ^ecs.World,
 	state_res: params.Res(Sphere_UI_State),
@@ -479,6 +481,7 @@ sphere_ui_input_system :: proc(
 	}
 }
 
+@(tag = "system")
 sphere_ui_render_system :: proc(
 	world: ^ecs.World,
 	render_ctx: params.Res(graphics.Render_Context),
@@ -539,6 +542,7 @@ sphere_ui_render_system :: proc(
 	)
 }
 
+@(tag = "system")
 sphere_ui_feedback_system :: proc(world: ^ecs.World, state_res: params.Res(Sphere_UI_State)) {
 	state := state_res.ptr
 	if state == nil do return

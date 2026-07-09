@@ -26,7 +26,7 @@ Gizmo_Plugin_3D :: proc() -> app.Plugin {
 				a,
 				app.Render,
 				draw_gizmo_3d_system,
-				before = []rawptr{rawptr(g.main_render_system)},
+				before = []app.System_Dependency{rawptr(g.main_render_system)},
 			)
 		}}
 }
@@ -67,6 +67,7 @@ draw_arrow_3d :: proc(
 }
 
 // draw_gizmo_3d_system is an ECS system that draws 3D gizmos for all entities with Transform and Gizmo3D components.
+@(tag = "system")
 draw_gizmo_3d_system :: proc(query: params.Query(struct {
 			t: transform.Transform,
 			g: Gizmo3D,

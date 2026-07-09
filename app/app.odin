@@ -197,10 +197,10 @@ app_update :: proc(app: ^App) {
 	app_run_schedule(app, PreUpdate)
 	app_run_schedule(app, Update)
 	app_run_schedule(app, PostUpdate)
-	app_run_schedule(app, Last)
 	app_run_schedule(app, PreRender)
 	app_run_schedule(app, Render)
 	app_run_schedule(app, PostRender)
+	app_run_schedule(app, Last)
 
 	if App_Exit_Event in app.world.event_manager.history {
 		buf := app.world.event_manager.history[App_Exit_Event]

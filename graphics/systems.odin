@@ -78,6 +78,7 @@ screenshot_recording_end :: proc(w: ^ecs.World) {
 	}
 }
 
+@(tag = "system")
 frame_start_system :: proc(
 	ctx_res: params.Res(Render_Context),
 	fctx_res: params.Res(Frame_Context),
@@ -120,6 +121,7 @@ frame_start_system :: proc(
 	fctx.encoder = wgpu.DeviceCreateCommandEncoder(ctx.device, &encoder_desc)
 }
 
+@(tag = "system")
 frame_present_system :: proc(
 	world: ^ecs.World,
 	ctx_res: params.Res(Render_Context),

@@ -1,6 +1,8 @@
 package reflect_utils
 
 import "base:runtime"
+import "core:hash"
+import "core:reflect"
 
 // Generic helper for match procs: checks if a type is a struct with a specific field.
 match_struct_field :: proc(
@@ -81,4 +83,29 @@ get_procedure_params :: proc(info: ^runtime.Type_Info) -> (runtime.Type_Info_Par
 // Get base type info from a typeid
 base_info_of :: proc(tid: typeid) -> ^runtime.Type_Info {
 	return runtime.type_info_base(type_info_of(tid))
+}
+
+get_struct_fields_hash :: proc($T: typeid) -> (u64, bool) {
+	info := reflect.type_info_of(T)
+
+	s, ok := info.variant.(reflect.Type_Info_Struct)
+	if !ok {
+		return 0, false
+	}
+	h: u64 = hash_of(s)
+
+	return h, h != 0
+}
+
+hash_of :: proc(info: reflect.Type_Info_Struct) -> u64 {
+	h: u64 = 0
+
+	for i in 0 ..< info.field_count {
+		h = hash.fnv64a(transmute([]byte)info.names[i], h)
+		type_ptr := rawptr(info.types[i])
+		type_ptr_bytes := transmute([size_of(rawptr)]byte)type_ptr
+		h = hash.fnv64a(type_ptr_bytes[:], h)
+	}
+
+	return h
 }

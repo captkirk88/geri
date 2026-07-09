@@ -158,16 +158,11 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	app.app_add_system(a, app.PreRender, frame_start_system)
 	app.app_add_system(a, app.Render, main_render_system)
 	app.app_add_system(a, app.PostRender, frame_present_system)
-	app.app_add_system(
-		a,
-		app.PostRender,
-		render_cleanup_system,
-		after = []app.System_Dependency{rawptr(frame_present_system)},
-		before = []app.System_Dependency{rawptr(windowing.window_cleanup_system)},
-	)
+	app.app_add_system(a, app.Last, render_cleanup_system)
 	app.app_add_system(a, app.First, handle_resize_system) // To resize surface
 }
 
+@(tag = "system")
 render_cleanup_system :: proc(
 	exit_events: params.EventReader(app.App_Exit_Event),
 	batch2d: params.Res(Batch2D),

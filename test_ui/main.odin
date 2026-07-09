@@ -46,6 +46,7 @@ Showcase_State :: struct {
 	box_color:      [4]f32,
 }
 
+@(tag = "system")
 setup_system :: proc(commands: params.Commands) {
 	// Root Container
 	root := ecs.commands_spawn(commands.ptr)
@@ -277,6 +278,7 @@ setup_system :: proc(commands: params.Commands) {
 }
 
 // Keyboard input system that highlights grid cells on pressing '1' to '9'
+@(tag = "system")
 keyboard_grid_system :: proc(world: ^ecs.World, key_inp: input.Input(input.KeyCode)) {
 	for arch in ecs.query(world, ui.UI_Node, Grid_Cell) {
 		nodes := ecs.arch_get_field(arch, ui.UI_Node)
@@ -286,7 +288,7 @@ keyboard_grid_system :: proc(world: ^ecs.World, key_inp: input.Input(input.KeyCo
 			node := &nodes[i]
 			cell := &cells[i]
 
-			kc := input.KeyCode.None
+			kc: input.KeyCode
 			switch cell.index {
 			case 1:
 				kc = .Num1
@@ -318,6 +320,7 @@ keyboard_grid_system :: proc(world: ^ecs.World, key_inp: input.Input(input.KeyCo
 }
 
 // Gesture scaling system that updates UI size on pinch scale or gamepad triggers
+@(tag = "system")
 gesture_scaling_system :: proc(
 	world: ^ecs.World,
 	gesture_inp: input.Input(input.Gesture),
@@ -356,6 +359,7 @@ gesture_scaling_system :: proc(
 }
 
 // Gamepad showcase system that logs when controller buttons are pressed/held/released
+@(tag = "system")
 gamepad_showcase_system :: proc(
 	gp_buttons: input.Input(input.GamepadButton),
 	gp_axes: input.Input(input.GamepadAxis),
@@ -373,6 +377,7 @@ gamepad_showcase_system :: proc(
 }
 
 // Timer system that manages the despawn countdown and logs cascading deletion details
+@(tag = "system")
 timer_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_State)) {
 	state := showcase_state.ptr
 	if state == nil do return
@@ -404,6 +409,7 @@ timer_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_Stat
 }
 
 // Rotating box system that updates the box's rotation, maps mouse position to local space, and updates color based on slider value
+@(tag = "system")
 rotating_box_system :: proc(
 	world: ^ecs.World,
 	showcase_state: params.Res(Showcase_State),

@@ -48,6 +48,7 @@ fps_average :: proc(c: ^Fps_Counter) -> f64 {
 }
 
 // System: runs in First — samples the wall-clock delta and records it.
+@(tag = "system")
 fps_tick_system :: proc(fps_res: params.Res(Fps_Counter)) {
 	c := fps_res.ptr
 	if c == nil do return
@@ -66,6 +67,7 @@ fps_tick_system :: proc(fps_res: params.Res(Fps_Counter)) {
 }
 
 // Applies FPS runtime settings that affect swapchain/present behavior.
+@(tag = "system")
 fps_settings_system :: proc(
 	settings_res: params.Res(Fps_Settings),
 	ctx_res: params.Res(graphics.Render_Context),
@@ -90,6 +92,7 @@ fps_settings_system :: proc(
 // System: runs in PostRender (before frame_present_system) — draws the FPS
 // counter into the dedicated HUD batch, then flushes it into a fresh
 // LoadOp:.Load render pass so it composites on top of the full scene.
+@(tag = "system")
 fps_render_system :: proc(
 	fps_res: params.Res(Fps_Counter),
 	batch_res: params.Res(Fps_Batch),
@@ -133,6 +136,7 @@ fps_render_system :: proc(
 }
 
 // System: cleans up the Fps_Batch on app exit.
+@(tag = "system")
 fps_cleanup_system :: proc(
 	exit_events: params.EventReader(app.App_Exit_Event),
 	batch_res: params.Res(Fps_Batch),
@@ -187,9 +191,9 @@ fps_plugin_build_impl :: proc(settings: Fps_Settings, plugin: app.Plugin, a: ^ap
 
 	app.app_add_system(
 		a,
-		app.PostRender,
+		app.Last,
 		fps_cleanup_system,
-		after = []app.System_Dependency{rawptr(graphics.frame_present_system)},
+		//after = []app.System_Dependency{rawptr(graphics.frame_present_system)},
 		before = []app.System_Dependency{rawptr(graphics.render_cleanup_system)},
 	)
 }

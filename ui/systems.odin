@@ -423,6 +423,7 @@ ui_process_deferred_despawns :: proc(w: ^ecs.World) {
 	}
 }
 
+@(tag = "system")
 ui_layout_system :: proc(
 	world: ^ecs.World,
 	window_res: params.Res(windowing.Window_Context),
@@ -628,6 +629,7 @@ ui_render_node :: proc(
 	}
 }
 
+@(tag = "system")
 ui_render_system :: proc(
 	world: ^ecs.World,
 	batch2d: params.Res(graphics.Batch2D),
@@ -750,6 +752,7 @@ ui_get_root_canvas :: proc(w: ^ecs.World, e: ecs.Entity) -> ecs.Entity {
 	return curr
 }
 
+@(tag = "system")
 ui_button_interaction_system :: proc(
 	world: ^ecs.World,
 	mouse_inp: input.Input(input.MouseButtonCode),
@@ -795,6 +798,7 @@ ui_button_interaction_system :: proc(
 	}
 }
 
+@(tag = "system")
 ui_slider_interaction_system :: proc(
 	world: ^ecs.World,
 	mouse_inp: input.Input(input.MouseButtonCode),

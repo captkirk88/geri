@@ -41,6 +41,8 @@ System :: struct {
 	pipe_in_size:      int,
 	// Composite system cleanup; owns and destroys inner system allocations
 	composite_destroy: proc(data: rawptr, allocator: mem.Allocator),
+	// Per-type local storage: keyed by hash, persists across run_system calls
+	local_storage:     map[u64]rawptr,
 }
 
 Schedule :: struct {
@@ -59,10 +61,11 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// No after_run hook is required because modifications are written directly to the resource memory.
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
-			base := runtime.type_info_base(info)
-			if !reflect.match_struct_field(base, "ptr", 1) do return false
-			s := base.variant.(runtime.Type_Info_Struct)
-			return reflect.get_pointer_elem_type(s, 0) != typeid_of(ecs.Commands)
+			PARAM_NAME :: "Res("
+			PARAM_LEN :: len(PARAM_NAME)
+			named, ok := info.variant.(runtime.Type_Info_Named)
+			if !ok do return false
+			return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			s := info.variant.(runtime.Type_Info_Struct)
@@ -73,57 +76,72 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		},
 	})
 
-	// Event_Writer system param: Initializes a dynamically-allocated array inside the system's parameter block.
+	// EventWriter system param: Initializes a dynamically-allocated array inside the system's parameter block.
 	// Systems simply append events to this array, which are then flushed to the World dynamically inside the after_run hook.
-	register_system_param_builder(w, {
-		match = proc(
-			info: ^runtime.Type_Info,
-		) -> bool {return reflect.match_struct_field(info, "_events", 2)},
-		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
-			Dummy :: struct {
-				_events: runtime.Raw_Dynamic_Array,
-				events:  ^runtime.Raw_Dynamic_Array,
-			}
-			dummy := (^Dummy)(ptr)
-			if dummy._events.allocator.procedure == nil {
-				dummy._events.allocator = context.allocator
-			}
-			dummy.events = &dummy._events
-		},
-		after_run = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
-			dyn_array := (^runtime.Raw_Dynamic_Array)(ptr)
-			if dyn_array.len > 0 {
-				s := info.variant.(runtime.Type_Info_Struct)
-				ev_type := reflect.get_dynamic_array_elem_type(s, 0)
-				event_size := int(s.types[0].variant.(runtime.Type_Info_Dynamic_Array).elem.size)
-
-				for i in 0 ..< dyn_array.len {
-					data_ptr := rawptr(uintptr(dyn_array.data) + uintptr(i * event_size))
-					events.trigger(&w.event_manager, w, ev_type, 0, data_ptr)
+	register_system_param_builder(
+		w,
+		{
+			match = proc(info: ^runtime.Type_Info) -> bool {
+				// return reflect.match_struct_field(info, "_events", 2)
+				PARAM_NAME :: "EventWriter("
+				PARAM_LEN :: len(PARAM_NAME)
+				named, ok := info.variant.(runtime.Type_Info_Named)
+				if !ok do return false
+				return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
+			},
+			build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+				Dummy :: struct {
+					_events: runtime.Raw_Dynamic_Array,
+					events:  ^runtime.Raw_Dynamic_Array,
 				}
+				dummy := (^Dummy)(ptr)
+				if dummy._events.allocator.procedure == nil {
+					dummy._events.allocator = context.allocator
+				}
+				dummy.events = &dummy._events
+			},
+			after_run = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+				dyn_array := (^runtime.Raw_Dynamic_Array)(ptr)
+				if dyn_array.len > 0 {
+					s := info.variant.(runtime.Type_Info_Struct)
+					ev_type := reflect.get_dynamic_array_elem_type(s, 0)
+					event_size := int(
+						s.types[0].variant.(runtime.Type_Info_Dynamic_Array).elem.size,
+					)
 
-				dyn_array.len = 0
-			}
-		},
-		destroy = proc(sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
-			dyn_array := (^runtime.Raw_Dynamic_Array)(ptr)
-			if dyn_array.data != nil {
-				free(dyn_array.data, dyn_array.allocator)
-				dyn_array.data = nil
-				dyn_array.cap = 0
-			}
-		},
-	})
+					for i in 0 ..< dyn_array.len {
+						data_ptr := rawptr(uintptr(dyn_array.data) + uintptr(i * event_size))
+						events.trigger(&w.event_manager, w, ev_type, 0, data_ptr)
+					}
 
-	// Event_Reader system param: Connects a system to the World's event history.
+					dyn_array.len = 0
+				}
+			},
+			destroy = proc(sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+				dyn_array := (^runtime.Raw_Dynamic_Array)(ptr)
+				if dyn_array.data != nil {
+					free(dyn_array.data, dyn_array.allocator)
+					dyn_array.data = nil
+					dyn_array.cap = 0
+				}
+			},
+		},
+	)
+
+	// EventReader system param: Connects a system to the World's event history.
 	// The builder isolates events emitted since the last time this specific system ran, copying them into a temporary slice.
 	// Since it only reads data into temp allocator, no after_run or destroy hook is necessary.
 	register_system_param_builder(
 		w,
 		{
-			match = proc(
-				info: ^runtime.Type_Info,
-			) -> bool {return reflect.match_struct_field(info, "events", 3)},
+			match = proc(info: ^runtime.Type_Info) -> bool {
+				//return reflect.match_struct_field(info, "events", 3)
+				PARAM_NAME :: "EventReader("
+				PARAM_LEN :: len(PARAM_NAME)
+				named, ok := info.variant.(runtime.Type_Info_Named)
+				if !ok do return false
+				return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
+			},
 			build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 				s := info.variant.(runtime.Type_Info_Struct)
 				ev_type := reflect.get_slice_elem_type(s, 0)
@@ -206,6 +224,7 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		},
 	})
 
+	// ecs.World reference system param
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
 			base := runtime.type_info_base(info)
@@ -221,10 +240,11 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// the field is filled from sys.pipe_in; otherwise it remains zero-initialised.
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
-			base := runtime.type_info_base(info)
-			s, ok := base.variant.(runtime.Type_Info_Struct)
-			if !ok || s.field_count != 1 do return false
-			return s.names[0] == "value"
+			PARAM_NAME :: "In("
+			PARAM_LEN :: len(PARAM_NAME)
+			named, ok := info.variant.(runtime.Type_Info_Named)
+			if !ok do return false
+			return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			sys_ptr := (^System)(sys)
@@ -235,12 +255,57 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		},
 	})
 
+	// Local(T) system param
+	register_system_param_builder(
+		w,
+		{
+			match = proc(info: ^runtime.Type_Info) -> bool {
+				PARAM_NAME :: "Local("
+				PARAM_LEN :: len(PARAM_NAME)
+				named, ok := info.variant.(runtime.Type_Info_Named)
+				if !ok do return false
+				return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
+			},
+			build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+				sys_ptr := (^System)(sys)
+				s := info.variant.(runtime.Type_Info_Struct)
+				value_field_ptr := (^rawptr)(uintptr(ptr) + s.offsets[0])
+				hash_ptr := (^u64)(uintptr(ptr) + s.offsets[1])
+
+				// The inner T is the pointee of the `value` field (^T), recover its type info.
+				value_ti_ptr := s.types[0].variant.(runtime.Type_Info_Pointer).elem
+				h := reflect.hash_of(s)
+				hash_ptr^ = h
+
+				// Allocate once per system per type; reuse on subsequent build calls.
+				if _, exists := sys_ptr.local_storage[h]; !exists {
+					buf, _ := mem.alloc(value_ti_ptr.size, value_ti_ptr.align)
+					mem.zero(buf, value_ti_ptr.size)
+					sys_ptr.local_storage[h] = buf
+				}
+				value_field_ptr^ = sys_ptr.local_storage[h]
+			},
+			destroy = proc(sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
+				sys_ptr := (^System)(sys)
+				s := info.variant.(runtime.Type_Info_Struct)
+				hash_ptr := (^u64)(uintptr(ptr) + s.offsets[1])
+				h := hash_ptr^
+				if buf, exists := sys_ptr.local_storage[h]; exists {
+					free(buf)
+					delete_key(&sys_ptr.local_storage, h)
+				}
+			},
+		},
+	)
+
 	// OnAdded system param
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
+			PARAM_NAME :: "OnAdded("
+			PARAM_LEN :: len(PARAM_NAME)
 			named, ok := info.variant.(runtime.Type_Info_Named)
 			if !ok do return false
-			return len(named.name) >= 8 && named.name[:8] == "OnAdded("
+			return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			s := info.variant.(runtime.Type_Info_Struct)
@@ -299,9 +364,11 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// OnRemoved system param
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
+			PARAM_NAME :: "OnRemoved("
+			PARAM_LEN := len(PARAM_NAME)
 			named, ok := info.variant.(runtime.Type_Info_Named)
 			if !ok do return false
-			return len(named.name) >= 10 && named.name[:10] == "OnRemoved("
+			return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			s := info.variant.(runtime.Type_Info_Struct)
@@ -360,9 +427,11 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// Single system param
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
+			PARAM_NAME :: "Single("
+			PARAM_LEN := len(PARAM_NAME)
 			named, ok := info.variant.(runtime.Type_Info_Named)
 			if !ok do return false
-			return len(named.name) >= 7 && named.name[:7] == "Single("
+			return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			s := info.variant.(runtime.Type_Info_Struct)
@@ -401,9 +470,11 @@ world_init_default_params :: proc(w: ^ecs.World) {
 	// Query system param builder
 	register_system_param_builder(w, {
 		match = proc(info: ^runtime.Type_Info) -> bool {
+			PARAM_NAME :: "Query("
+			PARAM_LEN := len(PARAM_NAME)
 			named, ok := info.variant.(runtime.Type_Info_Named)
 			if !ok do return false
-			return len(named.name) >= 6 && named.name[:6] == "Query("
+			return len(named.name) >= PARAM_LEN && named.name[:PARAM_LEN] == PARAM_NAME
 		},
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			s := info.variant.(runtime.Type_Info_Struct)
@@ -534,7 +605,7 @@ new_system :: proc(
 		// 2. We cast the raw function pointer to its actual type T
 		fn := cast(T)(fn_ptr)
 
-		// 3. The Secret Sauce:
+		// 3. The Solution:
 		// Since we know T at compile-time, we can construct an inline
 		// type-assertion switch or use direct inline unpacking if we know the signature.
 		// If this runner is entirely generic, we cast the packed `data_ptr` memory
@@ -884,6 +955,7 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 	if sys.commands._world != nil {
 		ecs.commands_destroy(&sys.commands)
 	}
+	delete(sys.local_storage)
 	free(sys, allocator)
 }
 
@@ -945,17 +1017,24 @@ test_systems_params :: proc(t: ^testing.T) {
 		msg: int,
 	}
 
+	@(static) local_value: int = 0
+
 	// sys_proc now takes original unpacked params
 	sys_proc := proc(
 		config: params.Res(Config),
 		writer: params.EventWriter(MyEvent),
 		reader: params.EventReader(MyEvent),
+		local: params.Local(int),
 	) {
 		config.ptr.value += 1
 		if len(reader.events) > 0 {
 			config.ptr.value += reader.events[0].msg
 		}
 		params.write(writer, MyEvent{5})
+		if local.value^ == 0 {
+			local.value^ = 69
+			local_value = local.value^
+		}
 	}
 
 	sys := new_system(sys_proc)
@@ -967,6 +1046,8 @@ test_systems_params :: proc(t: ^testing.T) {
 
 	run_system(&w, sys)
 	testing.expect_value(t, conf.value, 17) // Value + 1 + event(5)
+
+	testing.expect_value(t, local_value, 69)
 }
 
 // ─── Composite system data ────────────────────────────────────────────────────
