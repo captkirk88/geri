@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import "core:c"
 import "core:math"
@@ -158,14 +158,10 @@ build_sphere_ui_renderer :: proc(
 	r := Sphere_UI_Renderer{}
 	if ctx == nil || ctx.device == nil || target.texture_view == nil do return r, false
 
-	shader_source := wgpu.ShaderSourceWGSL {
-		chain = {sType = .ShaderSourceWGSL},
-		code = SPHERE_UI_SHADER,
-	}
-	shader_desc := wgpu.ShaderModuleDescriptor {
-		nextInChain = &shader_source.chain,
-	}
-	r.shader_module = wgpu.DeviceCreateShaderModule(ctx.device, &shader_desc)
+	r.shader_module = graphics.shader_module_from_source(
+		ctx.device,
+		graphics.Shader_Source_WGSL{SPHERE_UI_SHADER},
+	)
 	if r.shader_module == nil do return r, false
 
 	layout_entries := [2]wgpu.BindGroupLayoutEntry {
@@ -183,7 +179,8 @@ build_sphere_ui_renderer :: proc(
 		},
 	}
 	layout_desc := wgpu.BindGroupLayoutDescriptor {
-		entryCount = 2,
+		label      = "Sphere Bind Group Layout",
+		entryCount = len(layout_entries),
 		entries    = &layout_entries[0],
 	}
 	r.bind_group_layout = wgpu.DeviceCreateBindGroupLayout(ctx.device, &layout_desc)
@@ -193,6 +190,7 @@ build_sphere_ui_renderer :: proc(
 	}
 
 	pipeline_layout_desc := wgpu.PipelineLayoutDescriptor {
+		label                = "Sphere Render Pipeline Layout",
 		bindGroupLayoutCount = 1,
 		bindGroupLayouts     = &r.bind_group_layout,
 	}
@@ -203,6 +201,7 @@ build_sphere_ui_renderer :: proc(
 	}
 
 	u_desc := wgpu.BufferDescriptor {
+		label = "Sphere Uniform Buffer",
 		usage = {.Uniform, .CopyDst},
 		size  = 256,
 	}
@@ -221,6 +220,7 @@ build_sphere_ui_renderer :: proc(
 	inds := [6]u32{0, 1, 2, 2, 3, 0}
 
 	vb_desc := wgpu.BufferDescriptor {
+		label = "Sphere Vertex Buffer",
 		usage = {.Vertex},
 		size  = u64(size_of(verts)),
 	}
@@ -236,6 +236,7 @@ build_sphere_ui_renderer :: proc(
 	}
 
 	ib_desc := wgpu.BufferDescriptor {
+		label = "Sphere Index Buffer",
 		usage = {.Index},
 		size  = u64(size_of(inds)),
 	}
@@ -259,39 +260,19 @@ build_sphere_ui_renderer :: proc(
 		attributes     = &vertex_attrs[0],
 	}
 
-	blend := wgpu.BlendState {
-		color = {srcFactor = .SrcAlpha, dstFactor = .OneMinusSrcAlpha, operation = .Add},
-		alpha = {srcFactor = .One, dstFactor = .OneMinusSrcAlpha, operation = .Add},
-	}
-	color_target := wgpu.ColorTargetState {
-		format    = ctx.config.format,
-		blend     = &blend,
-		writeMask = wgpu.ColorWriteMaskFlags_All,
-	}
-	fragment_state := wgpu.FragmentState {
-		module      = r.shader_module,
-		entryPoint  = "fs_main",
-		targetCount = 1,
-		targets     = &color_target,
-	}
-
-	pipeline_desc := wgpu.RenderPipelineDescriptor {
-		layout = r.pipeline_layout,
-		vertex = {
-			module = r.shader_module,
-			entryPoint = "vs_main",
-			bufferCount = 1,
-			buffers = &vertex_layout,
+	// Use the new helper to create the render pipeline. Pass nil for blend_state to use the default.
+	r.pipeline = graphics.render_create_pipeline(
+		ctx,
+		r.pipeline_layout,
+		r.shader_module,
+		vertex_layout,
+		wgpu.ColorTargetState {
+			format = ctx.config.format,
+			writeMask = wgpu.ColorWriteMaskFlags_All,
 		},
-		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
-		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
-		fragment = &fragment_state,
-	}
-	r.pipeline = wgpu.DeviceCreateRenderPipeline(ctx.device, &pipeline_desc)
-	if r.pipeline == nil {
-		sphere_ui_renderer_destroy(&r)
-		return r, false
-	}
+		nil,
+	)
+	if r.pipeline == nil {sphere_ui_renderer_destroy(&r); return r, false}
 
 	return r, true
 }

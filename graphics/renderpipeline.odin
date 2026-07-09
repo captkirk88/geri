@@ -1,4 +1,5 @@
 package graphics
+//! The goal of the renderpipeline is to eventually abstract away wgpu package where all the user needs is to use this.
 
 import "../app"
 import "../ecs/params"
@@ -113,6 +114,49 @@ render_draw_indexed_with_bind_group :: proc(
 	call_with_bind_group := call
 	call_with_bind_group.bind_group = bind_group
 	render_draw_indexed_call(pass, call_with_bind_group)
+}
+
+// Creates a render pipeline using a shared vertex/fragment shader.
+// `blend_state` is optional – if nil, a sensible default blend is used.
+render_create_pipeline :: proc(
+	ctx: ^Render_Context,
+	layout: wgpu.PipelineLayout,
+	shader: wgpu.ShaderModule,
+	vertex_layout: wgpu.VertexBufferLayout,
+	color_target: wgpu.ColorTargetState,
+	blend_state: ^wgpu.BlendState, // nullable
+) -> wgpu.RenderPipeline {
+	if ctx == nil || ctx.device == nil do return nil
+	// Default blend matches the original implementation.
+	default_blend := wgpu.BlendState {
+		color = {srcFactor = .SrcAlpha, dstFactor = .OneMinusSrcAlpha, operation = .Add},
+		alpha = {srcFactor = .One, dstFactor = .OneMinusSrcAlpha, operation = .Add},
+	}
+	blend := blend_state != nil ? blend_state : &default_blend
+	// Inject blend into a mutable copy of the color target.
+	mutable_target := color_target
+	mutable_target.blend = blend
+	// Guard against a zero writeMask silently killing all output.
+	if mutable_target.writeMask == {} {
+		mutable_target.writeMask = wgpu.ColorWriteMaskFlags_All
+	}
+
+	fragment_state := wgpu.FragmentState {
+		module      = shader,
+		entryPoint  = "fs_main",
+		targetCount = 1,
+		targets     = &mutable_target,
+	}
+	v_layout := vertex_layout
+	pipeline_desc := wgpu.RenderPipelineDescriptor {
+		layout = layout,
+		vertex = {module = shader, entryPoint = "vs_main", bufferCount = 1, buffers = &v_layout},
+		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
+		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		fragment = &fragment_state,
+	}
+
+	return wgpu.DeviceCreateRenderPipeline(ctx.device, &pipeline_desc)
 }
 
 @(tag = "system") // tagged so that users know this is a system and can be added to a schedule

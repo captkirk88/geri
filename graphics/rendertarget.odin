@@ -2,7 +2,7 @@ package graphics
 
 import "vendor:wgpu"
 
-// render_target_init allocates a WGPU texture and view of the given dimensions.
+// Allocates a WGPU texture and view of the given dimensions.
 // If format is .Undefined, it defaults to the context swapchain format.
 render_target_init :: proc(
 	ctx: ^Render_Context,
@@ -51,7 +51,7 @@ render_target_init :: proc(
 	return target, true
 }
 
-// render_target_destroy safely releases the underlying WGPU texture and view.
+// Safely releases the underlying WGPU texture and view.
 render_target_destroy :: proc(target: ^Render_Target) {
 	if target.texture_view != nil {
 		wgpu.TextureViewRelease(target.texture_view)

@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:io"
 import "vendor:wgpu"
 
-// create_render_shader_pass compiles a WGSL shader code into a render pipeline matching the vertex layout (2D or 3D).
+// Compiles a WGSL shader code into a render pipeline matching the vertex layout (2D or 3D).
 // If uniform_size > 0, it creates a unified uniform buffer and binds it at @group(0) @binding(0).
 create_render_shader_pass :: proc(
 	device: wgpu.Device,
@@ -172,7 +172,7 @@ create_render_shader_pass :: proc(
 	return pass, true
 }
 
-// create_compute_shader_pass compiles a WGSL compute shader and sets up a default bind group layout:
+// Compiles a WGSL compute shader and sets up a default bind group layout:
 // - Binding 0: Vertex Buffer (storage)
 // - Binding 1: Index Buffer (storage)
 // - Binding 2: Uniform Buffer (uniform, optional - active if uniform_size > 0)
@@ -272,12 +272,8 @@ create_compute_shader_pass :: proc(
 	return pass, true
 }
 
-// shader_pass_update_uniforms writes new uniform data from the CPU to the GPU uniform buffer.
-shader_pass_update_uniforms :: proc(
-	pass: ^Shader_Pass,
-	ctx: ^Render_Context,
-	uniforms: any,
-) {
+// Writes new uniform data from the CPU to the GPU uniform buffer.
+shader_pass_update_uniforms :: proc(pass: ^Shader_Pass, ctx: ^Render_Context, uniforms: any) {
 	if pass.uniform_buf == nil || pass.uniform_size == 0 do return
 
 	uniforms_info := runtime.type_info_base(type_info_of(uniforms.id))
@@ -292,47 +288,50 @@ shader_pass_update_uniforms :: proc(
 		),
 	)
 
-	wgpu.QueueWriteBuffer(
-		ctx.queue,
-		pass.uniform_buf,
-		0,
-		uniforms.data,
-		uint(uniforms_size),
-	)
+	wgpu.QueueWriteBuffer(ctx.queue, pass.uniform_buf, 0, uniforms.data, uint(uniforms_size))
 }
 
-// destroy_shader_pass releases all WGPU resources owned by the shader pass.
-// shader_module_from_source compiles a wgpu.ShaderModule from a Shader_Source union value.
+// Compiles a wgpu.ShaderModule from a Shader_Source union value.
 // Returns nil if the source variant is unrecognized or compilation fails.
-shader_module_from_source :: proc(device: wgpu.Device, source: Shader_Source) -> wgpu.ShaderModule {
+shader_module_from_source :: proc(
+	device: wgpu.Device,
+	source: Shader_Source,
+) -> wgpu.ShaderModule {
 	switch s in source {
 	case Shader_Source_WGSL:
 		src := wgpu.ShaderSourceWGSL {
 			chain = {sType = .ShaderSourceWGSL},
-			code  = s.code,
+			code = s.code,
 		}
-		desc := wgpu.ShaderModuleDescriptor{nextInChain = &src.chain}
+		desc := wgpu.ShaderModuleDescriptor {
+			nextInChain = &src.chain,
+		}
 		return wgpu.DeviceCreateShaderModule(device, &desc)
 	case Shader_Source_SPIRV:
 		src := wgpu.ShaderSourceSPIRV {
-			chain    = {sType = .ShaderSourceSPIRV},
+			chain = {sType = .ShaderSourceSPIRV},
 			codeSize = u32(len(s.code)),
-			code     = raw_data(s.code),
+			code = raw_data(s.code),
 		}
-		desc := wgpu.ShaderModuleDescriptor{nextInChain = &src.chain}
+		desc := wgpu.ShaderModuleDescriptor {
+			nextInChain = &src.chain,
+		}
 		return wgpu.DeviceCreateShaderModule(device, &desc)
 	case Shader_Source_GLSL:
 		src := wgpu.ShaderSourceGLSL {
 			chain = {sType = .ShaderSourceGLSL},
 			stage = s.stage,
-			code  = s.code,
+			code = s.code,
 		}
-		desc := wgpu.ShaderModuleDescriptor{nextInChain = &src.chain}
+		desc := wgpu.ShaderModuleDescriptor {
+			nextInChain = &src.chain,
+		}
 		return wgpu.DeviceCreateShaderModule(device, &desc)
 	}
 	return nil
 }
 
+// Releases all WGPU resources owned by the shader pass.
 destroy_shader_pass :: proc(pass: ^Shader_Pass) {
 	if pass.render_pipeline != nil {
 		wgpu.RenderPipelineRelease(pass.render_pipeline)
