@@ -6,7 +6,7 @@ Geri is a ECS (Entity Component System) framework for Odin inspired by [Bevy](ht
 
 ![test_shader_animation.gif](test_shader_animation.gif)
 
-<img src="test_ui_screenshot.png" width="400" height="300" />
+<img src="test_ui_screenshot.png?v=2" width="400" height="300" />
 
 ## Why Odin?
 
