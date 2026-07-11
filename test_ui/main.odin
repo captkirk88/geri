@@ -569,13 +569,14 @@ main :: proc() {
 	app.app_run_schedule(&application, app.Startup)
 
 	start_time := time.tick_now()
+	take_screenshot := false
 	screenshot_taken := false
 	screenshot_time := duration / 2
 
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
 
-		if !screenshot_taken && elapsed >= screenshot_time {
+		if take_screenshot && !screenshot_taken && elapsed >= screenshot_time {
 			graphics.capture_screenshot(&application.world, "test_ui_screenshot.png", .PNG)
 			screenshot_taken = true
 		}
