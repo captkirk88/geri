@@ -17,6 +17,7 @@ import fps "../fps"
 import graphics "../graphics"
 import threeD "../graphics/3d"
 import log "../logging"
+import gmem "../mem"
 import gtime "../time"
 import "../windowing"
 import "core:c"
@@ -358,19 +359,21 @@ cleanup_shader_system :: proc(
 	}
 }
 
+global_tracker: gmem.Tracker
+
 main :: proc() {
 	args := os.args
-	record_gif := true
+	record_gif := false
 	duration := 10 * time.Second
 	if len(args) > 1 {
 		for arg in args[1:] {
 			if strings.starts_with(arg, "--") {
 				arg := strings.trim_left(arg, "--")
 				switch arg {
-				case "no-record":
-					record_gif = false
+				case "record":
+					record_gif = true
 				case "help", "-":
-					log.info("Usage: test_shader [DURATION] [--no-record|--help]")
+					log.info("Usage: test_shader [DURATION] [--record|--help]")
 					return
 				case:
 					log.warn("Unknown argument: %s", arg)
@@ -383,7 +386,12 @@ main :: proc() {
 		}
 	}
 
-	log.info("Starting Shader Pass 3D Jelly Blob Demo...")
+	gmem.tracker_init(&global_tracker)
+	context.allocator = gmem.tracker_allocator(&global_tracker)
+	defer {
+		gmem.tracker_report(&global_tracker, "test-shader")
+		gmem.tracker_destroy(&global_tracker)
+	}
 
 	application := app.app_init(
 		[]app.Plugin {

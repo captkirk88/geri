@@ -71,13 +71,21 @@ tracker_destroy :: proc(t: ^Tracker) {
 	defer sync.unlock(&t.mutex)
 
 	if len(t._inner.allocation_map) > 0 {
-		log.write(.Warning, "[mem.Tracker] %d leak(s) detected at destroy:", len(t._inner.allocation_map))
+		log.write(
+			.Warning,
+			"[mem.Tracker] %d leak(s) detected at destroy:",
+			len(t._inner.allocation_map),
+		)
 		for _, entry in t._inner.allocation_map {
-			log.write(.Warning, "    %v — %s", entry.location, bench.format_bytes(entry.size))
+			log.write(.Warning, "    %v -> %s", entry.location, bench.format_bytes(entry.size))
 		}
 	}
 	if len(t._inner.bad_free_array) > 0 {
-		log.write(.Warning, "[mem.Tracker] %d bad free(s) detected at destroy:", len(t._inner.bad_free_array))
+		log.write(
+			.Warning,
+			"[mem.Tracker] %d bad free(s) detected at destroy:",
+			len(t._inner.bad_free_array),
+		)
 		for entry in t._inner.bad_free_array {
 			log.write(.Warning, "    %v — ptr %p", entry.location, entry.memory)
 		}
@@ -120,10 +128,7 @@ tracker_allocator_proc :: proc(
 // tracker_allocator returns a mem.Allocator backed by this Tracker.
 // Assign it to context.allocator to intercept all subsequent allocations.
 tracker_allocator :: proc(t: ^Tracker) -> core_mem.Allocator {
-	return core_mem.Allocator {
-		procedure = tracker_allocator_proc,
-		data = t,
-	}
+	return core_mem.Allocator{procedure = tracker_allocator_proc, data = t}
 }
 
 // tracker_snapshot captures the current allocation totals as a baseline.

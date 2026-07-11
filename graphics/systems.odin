@@ -21,6 +21,7 @@ import "vendor:wgpu"
 Gif_Frame_Task_Data :: struct {
 	writer: ^gif.Gif_Writer,
 	pixels: []byte,
+	allocator: runtime.Allocator,
 }
 
 gif_frame_worker_proc :: proc(task: thread.Task) {
@@ -28,14 +29,15 @@ gif_frame_worker_proc :: proc(task: thread.Task) {
 	if data == nil {
 		return
 	}
-	defer free(data, context.allocator)
+	allocator := data.allocator
+	defer free(data, allocator)
 	if data.writer == nil {
-		delete(data.pixels)
+		delete(data.pixels, allocator)
 		return
 	}
 
 	gif.write_frame(data.writer, data.pixels)
-	delete(data.pixels)
+	delete(data.pixels, allocator)
 }
 
 handle_resize_system :: proc(
@@ -79,7 +81,7 @@ screenshot_recording_end :: proc(w: ^ecs.World) {
 	if rec != nil {
 		rec.active = false
 		if rec.worker_pool != nil {
-			thread.pool_join(rec.worker_pool)
+			thread.pool_finish(rec.worker_pool)
 			thread.pool_destroy(rec.worker_pool)
 			free(rec.worker_pool, context.allocator)
 			rec.worker_pool = nil
@@ -278,11 +280,12 @@ frame_present_system :: proc(
 					}
 					if rec.writer.file != nil {
 						if rec.worker_pool != nil {
-							job_pixels := make([]byte, len(pixels))
+							job_pixels := make([]byte, len(pixels), context.allocator)
 							copy(job_pixels, pixels)
 							job := new(Gif_Frame_Task_Data, context.allocator)
 							job.writer = &rec.writer
 							job.pixels = job_pixels
+							job.allocator = context.allocator
 							thread.pool_add_task(
 								rec.worker_pool,
 								context.allocator,
