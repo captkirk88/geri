@@ -41,10 +41,16 @@ project_point :: proc(c: Camera, t: transform.Transform, point: [3]f32) -> [3]f3
 	return res4.xyz
 }
 
-auto_transform_system :: proc(commands: params.Commands, added_cameras: params.OnAdded(Camera)) {
+auto_transform_system :: proc(
+	world: ^ecs.World,
+	commands: params.Commands,
+	added_cameras: params.OnAdded(Camera),
+) {
 	for entity in added_cameras.entities {
-		t: transform.Transform
-		transform.init(&t)
-		ecs.commands_add_component(commands.ptr, entity, t)
+		if !ecs.world_has_component(world, entity, transform.Transform) {
+			t: transform.Transform
+			transform.init(&t)
+			ecs.commands_add_component(commands.ptr, entity, t)
+		}
 	}
 }

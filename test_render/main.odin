@@ -143,6 +143,8 @@ draw_circles_system :: proc(
 		vp = camera.get_view_projection(cam_param.value^, t^)
 	}
 
+
+
 	for arch in ecs.query(world, Position2D, Circle) {
 		positions := ecs.arch_get_field(arch, Position2D)
 		circles := ecs.arch_get_field(arch, Circle)
