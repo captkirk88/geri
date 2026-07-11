@@ -39,7 +39,6 @@ In :: struct($T: typeid) {
 }
 
 // Local is unique to the system that uses it
-// TODO
 Local :: struct($T: typeid) {
 	value: ^T,
 	_hash: u64,

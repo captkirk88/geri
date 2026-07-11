@@ -28,8 +28,6 @@ Batch2D :: graphics.Batch2D
 Vertex2D :: graphics.Vertex2D
 Render_Context :: graphics.Render_Context
 
-main_render_system :: graphics.main_render_system
-
 Circle :: struct {
 	radius: f32,
 	color:  [4]f32,
@@ -129,6 +127,7 @@ draw_circles_system :: proc(
 	world: ^ecs.World,
 	batch2d: params.Res(Batch2D),
 	render_ctx: params.Res(Render_Context),
+	window_res: params.Res(windowing.Window_Context),
 	cam_param: params.Single(camera.Camera),
 ) {
 	// Guard: skip if device has been released by cleanup system (would write to freed memory)
@@ -137,13 +136,20 @@ draw_circles_system :: proc(
 	batch := batch2d.ptr
 	if world == nil || batch == nil do return
 
+	win_w, win_h: c.int
+	if window_res.ptr != nil && window_res.ptr.window != nil {
+		sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+	} else {
+		win_w = 800
+		win_h = 600
+	}
+	ui_scale := f32(win_w) / 800.0
+
 	vp: linalg.Matrix4f32 = linalg.MATRIX4F32_IDENTITY
 	t := ecs.world_get_component(world, cam_param.entity, transform.Transform)
 	if t != nil {
 		vp = camera.get_view_projection(cam_param.value^, t^)
 	}
-
-
 
 	for arch in ecs.query(world, Position2D, Circle) {
 		positions := ecs.arch_get_field(arch, Position2D)
@@ -161,94 +167,98 @@ draw_circles_system :: proc(
 		graphics.draw_text(
 			batch,
 			"Hello [color=red]Red[/color], [color=green]Green[/color], and [color=blue]Blue[/color]!",
-			-350,
-			150,
+			-350 * ui_scale,
+			150 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 		graphics.draw_text(
 			batch,
 			"Beautiful [color=orange]Odin[/color] TTF [opacity=0.4]Opacity 0.4[/opacity] and [opacity=0.8]0.8[/opacity]!",
-			-350,
-			100,
+			-350 * ui_scale,
+			100 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 		graphics.draw_text(
 			batch,
 			"[bg=blue]Solid Blue Background[/bg] - [bg=green][bg_opacity=0.4]Transparent Green BG[/bg_opacity][/bg]",
-			-350,
-			50,
+			-350 * ui_scale,
+			50 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 		graphics.draw_text(
 			batch,
 			"[c=#ff0022]Custom Hex Colors and [b]Bold[/b] [i]Italic[/i] [u]Underline[/u] [s]Strikethrough[/s][/c]!",
-			-350,
-			0,
+			-350 * ui_scale,
+			0 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 		graphics.draw_text(
 			batch,
 			"Arial size 16: [font_size=16]Small Arial text[/font_size]",
-			-350,
-			-50,
+			-350 * ui_scale,
+			-50 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 		graphics.draw_text(
 			batch,
 			"Consolas: [font=C:\\Windows\\Fonts\\consola.ttf][font_size=20]Consolas size 20[/font_size] and normal[/font]",
-			-350,
-			-100,
+			-350 * ui_scale,
+			-100 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 		graphics.draw_text(
 			batch,
 			"Non-existent fallback: [font=non_existent.ttf]Should render as default font[/font]",
-			-350,
-			-150,
+			-350 * ui_scale,
+			-150 * ui_scale,
 			font,
-			1.0,
+			1.0 * ui_scale,
 			{1, 1, 1, 1},
 			vp,
 		)
 	}
 }
 
-movement_system :: proc(world: ^ecs.World, window_res: params.Res(windowing.Window_Context)) {
+movement_system :: proc(
+	world: ^ecs.World,
+	window_res: params.Res(windowing.Window_Context),
+	prev_tick_local: params.Local(time.Tick),
+	initialized_local: params.Local(bool),
+) {
 	if world == nil || window_res.ptr == nil do return
 
 	win_w, win_h: c.int
 	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+	win_scale := sdl3.GetWindowDisplayScale(window_res.ptr.window)
 	half_w := f32(win_w) / 2
 	half_h := f32(win_h) / 2
 
-	@(static) prev_tick: time.Tick
-	@(static) initialized: bool
-	if !initialized {
-		prev_tick = time.tick_now()
-		initialized = true
+	if initialized_local.value^ == false {
+		prev_tick_local.value^ = time.tick_now()
+		initialized_local.value^ = true
 	}
 
 	now := time.tick_now()
-	dt := f32(time.duration_seconds(time.tick_diff(prev_tick, now)))
-	prev_tick = now
+	dt := f32(time.duration_seconds(time.tick_diff(prev_tick_local.value^, now)))
+	prev_tick_local.value^ = now
 
 	// Clamp dt to avoid huge steps
 	if dt <= 0.0 || dt > 0.1 {
@@ -288,6 +298,16 @@ movement_system :: proc(world: ^ecs.World, window_res: params.Res(windowing.Wind
 	}
 }
 
+camera_resize_system :: proc(
+	resize_events: params.EventReader(windowing.Window_Resized_Event),
+	cam_param: params.Single(camera.Camera),
+) {
+	for event in resize_events.events {
+		w := f32(event.width)
+		h := f32(event.height)
+		camera.set_orthographic(cam_param.value, -w / 2, w / 2, -h / 2, h / 2, -1.0, 1.0)
+	}
+}
 
 main :: proc() {
 	args := os.args
@@ -324,11 +344,13 @@ main :: proc() {
 	// Register systems
 	app.app_add_system(&application, app.Startup, setup_system)
 	app.app_add_system(&application, app.Update, movement_system)
+	app.app_add_system(&application, app.Update, camera_resize_system)
+
 	app.app_add_system(
 		&application,
 		app.Render,
 		draw_circles_system,
-		before = []app.System_Dependency{rawptr(main_render_system)},
+		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
 
 	app.app_run_schedule(&application, app.Startup)

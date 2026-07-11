@@ -38,8 +38,20 @@ gif_frame_worker_proc :: proc(task: thread.Task) {
 	delete(data.pixels)
 }
 
-handle_resize_system :: proc() {
+handle_resize_system :: proc(
+	resize_events: params.EventReader(windowing.Window_Resized_Event),
+	render_ctx: params.Res(Render_Context),
+) {
+	if render_ctx.ptr == nil || render_ctx.ptr.device == nil do return
+	for event in resize_events.events {
+		if event.width > 0 && event.height > 0 {
+			render_ctx.ptr.config.width = u32(event.width)
+			render_ctx.ptr.config.height = u32(event.height)
+			wgpu.SurfaceConfigure(render_ctx.ptr.surface, &render_ctx.ptr.config)
+		}
+	}
 }
+
 
 capture_screenshot :: proc(w: ^ecs.World, path: string, format: Screenshot_Format = .TGA) {
 	ecs.world_add_resource(w, Screenshot_Request{path = path, format = format})

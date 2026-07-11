@@ -2,9 +2,9 @@ package logging_raylib
 
 import "base:runtime"
 import "core:c"
+import stdlog "core:log"
 import "core:mem"
 import "core:strings"
-import stdlog "core:log"
 import "vendor:raylib"
 import stbsp "vendor:stb/sprintf"
 
@@ -91,10 +91,10 @@ raylib_log_write :: proc(
 
 create_raylib_output :: proc(lowest_level: stdlog.Level) -> log.Log_Output {
 	return log.Log_Output {
-		lowest_level    = lowest_level,
-		write_proc      = raylib_log_write,
-		destroy_proc    = nil,
-		ptr            = nil,
+		lowest_level = lowest_level,
+		write_proc = raylib_log_write,
+		destroy_proc = nil,
+		ptr = nil,
 		suppressed_tags = {.Location},
 	}
 }

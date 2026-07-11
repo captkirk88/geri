@@ -4,7 +4,6 @@ import "../app"
 import "vendor:sdl3"
 
 
-
 Window_Descriptor :: struct {
 	title:      string,
 	width:      i32,
@@ -21,5 +20,12 @@ Window_Resized_Event :: struct {
 	width:  i32,
 	height: i32,
 }
+
+Window_Focus_Changed_Event :: enum {
+	Gained,
+	Lost,
+}
+
+Window_Orientation_Changed :: struct {}
 
 Window_Closed_Event :: struct {}

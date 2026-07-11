@@ -1,6 +1,9 @@
 package input
 
 import "../ecs/params"
+import "../windowing"
+import "../ecs"
+import "core:c"
 import "core:math"
 import "core:time"
 import "vendor:sdl3"
@@ -230,6 +233,8 @@ sdl_to_gamepad_axis :: proc(axis: sdl3.GamepadAxis) -> GamepadAxis {
 input_update_system :: proc(
 	events: params.EventReader(sdl3.Event),
 	state_res: params.Res(Input_State),
+	window_res: params.Res(windowing.Window_Context) = {},
+	win_desc: params.Res(windowing.Window_Descriptor) = {},
 ) {
 	state := state_res.ptr
 	if state == nil do return
@@ -242,15 +247,30 @@ input_update_system :: proc(
 	clear(&state.gestures_active)
 	clear(&state.gamepad_buttons_pressed)
 	clear(&state.gamepad_buttons_released)
-	clear(&state.targets)
 	state.mouse_wheel = {0, 0}
 	state.mouse_delta = {0, 0}
 	state.pan_delta = {0, 0}
 	state.pinch_scale = 1.0
 
+	win_w, win_h: c.int = 800, 600
+	ref_w, ref_h: f32 = 800.0, 600.0
+
+	if window_res.ptr != nil && window_res.ptr.window != nil {
+		sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+	}
+	if win_desc.ptr != nil {
+		ref_w = f32(win_desc.ptr.width)
+		ref_h = f32(win_desc.ptr.height)
+	}
+
+	scale_x := f32(win_w) / ref_w
+	scale_y := f32(win_h) / ref_h
+	if scale_x <= 0.0 do scale_x = 1.0
+	if scale_y <= 0.0 do scale_y = 1.0
+
 	mx, my: f32
 	_ = sdl3.GetMouseState(&mx, &my)
-	state.mouse_position = {mx, my}
+	state.mouse_position = {mx / scale_x, my / scale_y}
 
 	now := time.tick_now()
 
@@ -271,21 +291,21 @@ input_update_system :: proc(
 				state.keys_released += {kc}
 			}
 		case .MOUSE_MOTION:
-			state.mouse_position = {ev.motion.x, ev.motion.y}
-			state.mouse_delta = {ev.motion.xrel, ev.motion.yrel}
+			state.mouse_position = {ev.motion.x / scale_x, ev.motion.y / scale_y}
+			state.mouse_delta = {ev.motion.xrel / scale_x, ev.motion.yrel / scale_y}
 			if state.mouse_buttons_down[.Left] {
 				state.is_dragging = true
 				state.gestures_active[.Pan] = true
-				state.pan_delta = {ev.motion.xrel, ev.motion.yrel}
+				state.pan_delta = {ev.motion.xrel / scale_x, ev.motion.yrel / scale_y}
 			}
 		case .MOUSE_BUTTON_DOWN:
 			btn := sdl_to_buttoncode(ev.button.button)
 			if btn != .None {
-				state.mouse_position = {ev.button.x, ev.button.y}
+				state.mouse_position = {ev.button.x / scale_x, ev.button.y / scale_y}
 				state.mouse_buttons_pressed[btn] = true
 				state.mouse_buttons_down[btn] = true
 				if btn == .Left {
-					state.gesture_start_pos = {ev.button.x, ev.button.y}
+					state.gesture_start_pos = {ev.button.x / scale_x, ev.button.y / scale_y}
 					state.gesture_start_time = now
 					state.is_dragging = false
 				}
@@ -293,12 +313,12 @@ input_update_system :: proc(
 		case .MOUSE_BUTTON_UP:
 			btn := sdl_to_buttoncode(ev.button.button)
 			if btn != .None {
-				state.mouse_position = {ev.button.x, ev.button.y}
+				state.mouse_position = {ev.button.x / scale_x, ev.button.y / scale_y}
 				state.mouse_buttons_down[btn] = false
 				state.mouse_buttons_released[btn] = true
 
 				if btn == .Left {
-					end_pos := [2]f32{ev.button.x, ev.button.y}
+					end_pos := [2]f32{ev.button.x / scale_x, ev.button.y / scale_y}
 					delta := end_pos - state.gesture_start_pos
 					dist := math.sqrt(delta.x * delta.x + delta.y * delta.y)
 					dur := time.duration_seconds(time.tick_since(state.gesture_start_time))

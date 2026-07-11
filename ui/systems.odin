@@ -1,6 +1,7 @@
 package ui
 
 import camera "../camera"
+import "../app"
 import "../ecs"
 import "../ecs/params"
 import graphics "../graphics"
@@ -427,15 +428,16 @@ ui_process_deferred_despawns :: proc(w: ^ecs.World) {
 ui_layout_system :: proc(
 	world: ^ecs.World,
 	window_res: params.Res(windowing.Window_Context),
+	win_desc: params.Res(windowing.Window_Descriptor),
 	ui_state: params.Res(UI_State),
 ) {
 	if world == nil || window_res.ptr == nil || ui_state.ptr == nil do return
 
 	ui_process_deferred_despawns(world)
 
-	win_w, win_h: c.int
-	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-	parent_rect := UI_Rect{0, 0, f32(win_w), f32(win_h)}
+	ref_w := f32(win_desc.ptr.width) if win_desc.ptr != nil else 800.0
+	ref_h := f32(win_desc.ptr.height) if win_desc.ptr != nil else 600.0
+	parent_rect := UI_Rect{0, 0, ref_w, ref_h}
 
 	for arch in ecs.query(world, UI_Node) {
 		entities := ecs.arch_get_entities(arch)
@@ -635,14 +637,15 @@ ui_render_system :: proc(
 	batch2d: params.Res(graphics.Batch2D),
 	render_ctx: params.Res(graphics.Render_Context),
 	window_res: params.Res(windowing.Window_Context),
+	win_desc: params.Res(windowing.Window_Descriptor),
 	fctx_res: params.Res(graphics.Frame_Context),
 ) {
 	if render_ctx.ptr == nil || render_ctx.ptr.device == nil || batch2d.ptr == nil || window_res.ptr == nil || fctx_res.ptr == nil || fctx_res.ptr.encoder == nil do return
 
 	fctx := fctx_res.ptr
-	win_w, win_h: c.int
-	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-	default_vp := ui_projection_matrix(f32(win_w), f32(win_h))
+	ref_w := f32(win_desc.ptr.width) if win_desc.ptr != nil else 800.0
+	ref_h := f32(win_desc.ptr.height) if win_desc.ptr != nil else 600.0
+	default_vp := ui_projection_matrix(ref_w, ref_h)
 
 	// Find root nodes and render recursively
 	for arch in ecs.query(world, UI_Node) {
@@ -700,10 +703,9 @@ ui_render_system :: proc(
 
 								vp = camera_vp * canvas_model * local_to_quad
 							} else {
-								// 2D Rotated/Scaled Canvas
-								win_w, win_h: c.int
-								sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-								camera_vp := ui_projection_matrix(f32(win_w), f32(win_h))
+								ref_w := f32(win_desc.ptr.width) if win_desc.ptr != nil else 800.0
+								ref_h := f32(win_desc.ptr.height) if win_desc.ptr != nil else 600.0
+								camera_vp := ui_projection_matrix(ref_w, ref_h)
 
 								canvas_model := canvas_trans.world_matrix
 								local_to_center := linalg.matrix4_translate_f32(
@@ -750,6 +752,11 @@ ui_get_root_canvas :: proc(w: ^ecs.World, e: ecs.Entity) -> ecs.Entity {
 		curr = parent
 	}
 	return curr
+}
+
+UI_INTERACTION_SYSTEMS_GROUP := []app.System_Dependency {
+	rawptr(ui_button_interaction_system),
+	rawptr(ui_slider_interaction_system),
 }
 
 @(tag = "system")

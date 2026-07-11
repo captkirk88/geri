@@ -429,18 +429,20 @@ rotating_box_system :: proc(
 	world: ^ecs.World,
 	showcase_state: params.Res(Showcase_State),
 	mouse_inp: input.Input(input.MouseButtonCode),
-	window_res: params.Res(windowing.Window_Context),
+	win_desc: params.Res(windowing.Window_Descriptor),
 ) {
 	state := showcase_state.ptr
-	if state == nil || window_res.ptr == nil do return
+	if state == nil do return
 
 	elapsed := f32(time.duration_seconds(time.tick_since(state.start_time)))
 
-	win_w, win_h: c.int
-	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
+	ref_w :=
+		f32(win_desc.ptr.width) if win_desc.ptr != nil else f32(windowing.DEFAULT_WINDOW_DESCRIPTOR.width)
+	ref_h :=
+		f32(win_desc.ptr.height) if win_desc.ptr != nil else f32(windowing.DEFAULT_WINDOW_DESCRIPTOR.height)
 
-	cx := f32(win_w) * 0.5
-	cy := f32(win_h) * 0.5
+	cx := ref_w * 0.5
+	cy := ref_h * 0.5
 
 	box_w: f32 = 250.0
 	box_h: f32 = 250.0
@@ -489,7 +491,7 @@ rotating_box_system :: proc(
 
 	// 2. Map Screen Mouse Coordinates to Box Local Coordinate Space using the Inverse of VP
 	mpos := input.mouse_position(mouse_inp)
-	camera_vp := ui.ui_projection_matrix(f32(win_w), f32(win_h))
+	camera_vp := ui.ui_projection_matrix(ref_w, ref_h)
 	local_to_center := linalg.matrix4_translate_f32({-box_w * 0.5, -box_h * 0.5, 0.0})
 	vp := camera_vp * canvas_trans.world_matrix * local_to_center
 	inv_vp := linalg.matrix4_inverse(vp)
@@ -557,7 +559,12 @@ main :: proc() {
 	app.app_add_system(&application, app.Update, gesture_scaling_system)
 	app.app_add_system(&application, app.Update, gamepad_showcase_system)
 	app.app_add_system(&application, app.Update, timer_system)
-	app.app_add_system(&application, app.Update, rotating_box_system)
+	app.app_add_system(
+		&application,
+		app.Update,
+		rotating_box_system,
+		before = ui.UI_INTERACTION_SYSTEMS_GROUP,
+	)
 
 	app.app_run_schedule(&application, app.Startup)
 

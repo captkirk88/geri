@@ -10,7 +10,7 @@ import "vendor:sdl3"
 
 // Default descriptor if not set by the user
 DEFAULT_WINDOW_DESCRIPTOR :: Window_Descriptor {
-	title      = "Geri Engine",
+	title      = "Geri ECS",
 	width      = 800,
 	height     = 600,
 	resizable  = true,
@@ -28,7 +28,7 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		desc = ecs.world_get_resource(&a.world, Window_Descriptor)
 	}
 
-	if !sdl3.Init({.VIDEO, .GAMEPAD}) {
+	if !sdl3.Init({.VIDEO, .GAMEPAD, .AUDIO, .JOYSTICK, .HAPTIC, .SENSOR, .EVENTS}) {
 		err_cstr := sdl3.GetError()
 		defer delete_cstring(err_cstr)
 		err_str, err := strings.clone_from_cstring(err_cstr)
