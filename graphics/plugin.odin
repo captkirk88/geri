@@ -53,6 +53,7 @@ _on_device :: proc "c" (
 render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	window_ctx := ecs.world_get_resource(&a.world, windowing.Window_Context)
 	if window_ctx == nil || window_ctx.window == nil {
+		// TODO allow without WindowPlugin where surface is populated with a empty surface
 		log.error(
 			"Render_Plugin requires Window_Context to be initialized first. Did you forget to add Window_Plugin?",
 		)
@@ -148,6 +149,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 
 	app.app_add_resource(a, render_ctx)
 	app.app_add_resource(a, Frame_Context{})
+	app.app_add_resource(a, Clear_Color{})
 
 	batch2d := init_batch2d(req_data.device, config.format)
 	app.app_add_resource(a, batch2d)

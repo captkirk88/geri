@@ -22,7 +22,12 @@ match_struct_field :: proc(
 	return false
 }
 
-// Generic helper for build procs: casts a rawptr to a pointer of type T and assigns a value.
+// Ccasts a rawptr to a pointer of type T and assigns a value.
+//
+// Or just type this out every time:
+// ```odin
+// ((^T)(ptr))^ = value
+// ```
 assign_ptr_value :: proc(ptr: rawptr, value: $T) {
 	((^T)(ptr))^ = value
 }

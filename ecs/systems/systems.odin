@@ -1,6 +1,7 @@
 package systems
 
 import ecs ".."
+import log "../../logging"
 import events "../events"
 import params "../params"
 import "base:intrinsics"
@@ -43,6 +44,8 @@ System :: struct {
 	composite_destroy: proc(data: rawptr, allocator: mem.Allocator),
 	// Per-type local storage: keyed by hash, persists across run_system calls
 	local_storage:     map[u64]rawptr,
+	// Name of system procedure
+	name:              string,
 }
 
 Schedule :: struct {
@@ -72,6 +75,11 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			res_type := reflect.get_pointer_elem_type(s, 0)
 			if res, ok := w.resources[res_type]; ok {
 				reflect.assign_ptr_value(ptr, res)
+			} else {
+				system_loc := runtime.Source_Code_Location{}
+				system := (^System)(sys)
+				system_loc.procedure = system.name
+				log.panicf("Res(%v) - resource not found in world. Did you forget to add %v as a resource?", res_type, res_type, location = system_loc)
 			}
 		},
 	})
@@ -209,10 +217,8 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		build = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			sys_ptr := (^System)(sys)
 
-			if sys_ptr.commands._world == nil {
-				sys_ptr.commands = ecs.commands_init(w)
-			} else if sys_ptr.commands._world != w {
-				sys_ptr.commands._world = w
+			if sys_ptr.commands.buffer == nil {
+				sys_ptr.commands = ecs.commands_init(w.allocator)
 			}
 
 			cmds_struct := (^params.Commands)(ptr)
@@ -220,7 +226,7 @@ world_init_default_params :: proc(w: ^ecs.World) {
 		},
 		after_run = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			sys_ptr := (^System)(sys)
-			ecs.commands_flush(&sys_ptr.commands)
+			ecs.commands_flush(&sys_ptr.commands, w)
 		},
 	})
 
@@ -592,9 +598,11 @@ register_system_param :: proc(
 new_system :: proc(
 	procedure: $T,
 	allocator := context.allocator,
+	name := #caller_expression(procedure),
 ) -> ^System where intrinsics.type_is_proc(T) {
 	s := new(System, allocator)
 	s.procedure = rawptr(procedure)
+	s.name = name
 
 	s.runner = proc(sys: ^System, data_ptr: rawptr) {
 		base_ti := reflect.base_info_of(typeid_of(T))
@@ -952,7 +960,7 @@ destroy_system :: proc(w: ^ecs.World, sys: ^System, allocator := context.allocat
 		}
 		free(sys.params_data, allocator)
 	}
-	if sys.commands._world != nil {
+	if sys.commands.buffer != nil {
 		ecs.commands_destroy(&sys.commands)
 	}
 	delete(sys.local_storage)

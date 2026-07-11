@@ -171,6 +171,7 @@ app_set_schedule_parallel :: proc(app: ^App, label: Schedule_Label, parallel: bo
 // Returns true if the schedule label requires the main thread (e.g. rendering, event pumping).
 is_main_thread_schedule :: proc(label: Schedule_Label) -> bool {
 	if label == First do return true
+	if label == Last do return true
 	label_str := string(label)
 	return strings.contains(strings.to_lower(label_str, context.temp_allocator), "render")
 }

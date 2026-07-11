@@ -3,6 +3,7 @@ package main
 import "base:runtime"
 import "core:c"
 import "core:math/linalg"
+import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:testing"
@@ -17,6 +18,7 @@ import graphics "../graphics"
 import twoD "../graphics/2d"
 import input "../input"
 import log "../logging"
+import gmem "../mem"
 import gtime "../time"
 import transform "../transform"
 import ui "../ui"
@@ -45,6 +47,8 @@ Showcase_State :: struct {
 	box_canvas:     ecs.Entity,
 	box_color:      [4]f32,
 }
+
+global_tracker: gmem.Tracker
 
 @(tag = "system")
 setup_system :: proc(commands: params.Commands) {
@@ -150,10 +154,8 @@ setup_system :: proc(commands: params.Commands) {
 		ui.Layout_Grid{columns = 3, rows = 3, column_gap = 10.0, row_gap = 10.0},
 	)
 	ecs.commands_add_relation(commands.ptr, grid_panel.entity, ecs.ChildOf, root.entity)
-
 	// Store grid panel entity so timer system can despawn it
 	ecs.commands_add_resource_no_destroy(commands.ptr, Grid_Panel_Res{entity = grid_panel.entity})
-
 	// Spawn 3x3 Grid Cells
 	for row in 0 ..< 3 {
 		for col in 0 ..< 3 {
@@ -332,7 +334,8 @@ gesture_scaling_system :: proc(
 	// Gamepad trigger input is also frame-relative delta
 	rt := input.gamepad_axis(gamepad_inp, .TriggerRight)
 	lt := input.gamepad_axis(gamepad_inp, .TriggerLeft)
-	gamepad_delta := 1.0 + (rt - lt) * 0.1
+	gamepad_sensitivity := f32(0.001)
+	gamepad_delta := 1.0 + (rt - lt) * gamepad_sensitivity
 
 	frame_scale := pinch_delta * gamepad_delta
 
@@ -384,14 +387,26 @@ timer_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_Stat
 
 	elapsed := time.duration_seconds(time.tick_since(state.start_time))
 
+	grid_res := ecs.world_get_resource(world, Grid_Panel_Res)
+	if grid_res != nil && grid_res.entity.gen == 0 {
+		// Resolve the placeholder to the real entity once spawned
+		for arch in ecs.query(world, ui.Layout_Grid) {
+			entities := ecs.arch_get_entities(arch)
+			if len(entities) > 0 {
+				grid_res.entity = entities[0]
+				break
+			}
+		}
+	}
+
 	if !state.grid_despawned && elapsed >= 4.0 {
-		grid_res := ecs.world_get_resource(world, Grid_Panel_Res)
-		if grid_res != nil {
+		if grid_res != nil && grid_res.entity != {} {
 			log.info(
 				"Test Showcase: Despawning the Grid Panel entity to trigger cascading cleanup...",
 			)
 			ecs.world_despawn(world, grid_res.entity)
 			state.grid_despawned = true
+			gmem.tracker_snapshot(&global_tracker)
 		}
 	}
 
@@ -431,29 +446,45 @@ rotating_box_system :: proc(
 	box_h: f32 = 250.0
 	angle := elapsed * 1.0
 
-	// 1. Update Box Canvas Transform (Rotation & Screen Centering)
-	canvas_trans := ecs.world_get_component(world, state.box_canvas, transform.Transform)
-	if canvas_trans != nil {
-		c_val := linalg.cos(angle)
-		s_val := linalg.sin(angle)
-		canvas_trans.world_matrix = linalg.Matrix4f32 {
-			c_val,
-			-s_val,
-			0.0,
-			cx,
-			s_val,
-			c_val,
-			0.0,
-			cy,
-			0.0,
-			0.0,
-			1.0,
-			0.0,
-			0.0,
-			0.0,
-			0.0,
-			1.0,
+	// Find the real box canvas entity in the world
+	box_canvas_ent: ecs.Entity
+	for arch in ecs.query(world, ui.UI_Canvas, transform.Transform) {
+		canvases := ecs.arch_get_field(arch, ui.UI_Canvas)
+		entities := ecs.arch_get_entities(arch)
+		for i in 0 ..< len(canvases) {
+			if canvases[i].render_mode == .World_Space {
+				box_canvas_ent = entities[i]
+				break
+			}
 		}
+		if box_canvas_ent != {} do break
+	}
+
+	if box_canvas_ent == {} do return
+
+	// 1. Update Box Canvas Transform (Rotation & Screen Centering)
+	canvas_trans := ecs.world_get_component(world, box_canvas_ent, transform.Transform)
+	if canvas_trans == nil do return
+
+	c_val := linalg.cos(angle)
+	s_val := linalg.sin(angle)
+	canvas_trans.world_matrix = linalg.Matrix4f32 {
+		c_val,
+		-s_val,
+		0.0,
+		cx,
+		s_val,
+		c_val,
+		0.0,
+		cy,
+		0.0,
+		0.0,
+		1.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		1.0,
 	}
 
 	// 2. Map Screen Mouse Coordinates to Box Local Coordinate Space using the Inverse of VP
@@ -469,7 +500,7 @@ rotating_box_system :: proc(
 	local_x := local_pos_4.x / local_pos_4.w
 	local_y := local_pos_4.y / local_pos_4.w
 
-	input.set_target_mouse_position(mouse_inp, state.box_canvas, {local_x, local_y})
+	input.set_target_mouse_position(mouse_inp, box_canvas_ent, {local_x, local_y})
 
 	// 3. Update Box Color from the Slider's value
 	for arch in ecs.query(world, ui.Slider) {
@@ -486,13 +517,19 @@ rotating_box_system :: proc(
 		}
 	}
 
-	box_node := ecs.world_get_component(world, state.box_canvas, ui.UI_Node)
+	box_node := ecs.world_get_component(world, box_canvas_ent, ui.UI_Node)
 	if box_node != nil {
 		box_node.bg_color = state.box_color
 	}
 }
 
 main :: proc() {
+	gmem.tracker_init(&global_tracker)
+	context.allocator = gmem.tracker_allocator(&global_tracker)
+	defer {
+		gmem.tracker_report(&global_tracker, "test-ui")
+		gmem.tracker_destroy(&global_tracker)
+	}
 	args := os.args
 	duration := 10 * time.Second
 	if len(args) > 1 {
@@ -520,15 +557,7 @@ main :: proc() {
 	app.app_add_system(&application, app.Update, gesture_scaling_system)
 	app.app_add_system(&application, app.Update, gamepad_showcase_system)
 	app.app_add_system(&application, app.Update, timer_system)
-	app.app_add_system(
-		&application,
-		app.Update,
-		rotating_box_system,
-		before = []app.System_Dependency {
-			rawptr(ui.ui_button_interaction_system),
-			rawptr(ui.ui_slider_interaction_system),
-		},
-	)
+	app.app_add_system(&application, app.Update, rotating_box_system)
 
 	app.app_run_schedule(&application, app.Startup)
 

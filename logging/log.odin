@@ -675,56 +675,44 @@ deinit_log :: proc "contextless" () {
 	logger = {}
 }
 
+write :: proc(level: log.Level, format: string, args: ..any, location := #caller_location) {
+	context.logger = logger
+	if len(args) > 0 {
+		log.logf(level, format, ..args, location = location)
+	} else {
+		log.log(level, format, location = location)
+	}
+}
+
 // Log a formatted debug message
 debug :: proc(format: string, args: ..any, location := #caller_location) {
 	if ODIN_DEBUG == false && ODIN_TEST == false {
 		return
 	}
-	context.logger = logger
-	if len(args) > 0 {
-		log.logf(.Debug, format, ..args, location = location)
-	} else {
-		log.log(.Debug, format, location = location)
-	}
+	write(.Debug, format, ..args, location = location)
 }
 
 // Log a formatted warning message
 warn :: proc(format: string, args: ..any, location := #caller_location) {
 	context.logger = logger
-	if len(args) > 0 {
-		log.logf(.Warning, format, ..args, location = location)
-	} else {
-		log.log(.Warning, format, location = location)
-	}
+	write(.Warning, format, ..args, location = location)
 }
 
 // Log a formatted informational message
 info :: proc(format: string, args: ..any, location := #caller_location) {
 	context.logger = logger
-	if len(args) > 0 {
-		log.logf(.Info, format, ..args, location = location)
-	} else {
-		log.log(.Info, format, location = location)
-	}
+	write(.Info, format, ..args, location = location)
 }
 
 // Log a formatted error message
 error :: proc(format: string, args: ..any, location := #caller_location) {
-	if len(args) > 0 {
-		log.logf(.Error, format, ..args, location = location)
-	} else {
-		log.log(.Error, format, location = location)
-	}
+	write(.Error, format, ..args, location = location)
 }
 
 // Log a formatted fatal error and exit the program
 fatal :: proc(format: string, args: ..any, location := #caller_location) {
 	context.logger = logger
-	if len(args) > 0 {
-		log.logf(.Fatal, format, ..args, location = location)
-	} else {
-		log.log(.Fatal, format, location = location)
-	}
+	write(.Fatal, format, ..args, location = location)
 }
 
 // Log a panic message and exit the program

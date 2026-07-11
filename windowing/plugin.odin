@@ -49,7 +49,7 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 
 	// Add event pump system
 	app.app_add_system(a, app.First, event_pump_system)
-	app.app_add_system(a, app.PostUpdate, window_cleanup_system)
+	app.app_add_system(a, app.Last, window_cleanup_system)
 }
 
 @(tag = "system")

@@ -22,7 +22,7 @@ interactive = true
 depends = ["build-odin", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  "odin run test_ui {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui.exe -- 10s",
+  "odin run test_ui {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_ui.exe",
 ]
 
 [tasks.test-ui-3d]
@@ -40,7 +40,7 @@ interactive = true
 depends = ["build-odin", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  "odin run test_render {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe -- 10s",
+  "odin run test_render {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -out:{{vars.BUILD_OUTPUT_DIR}}test_render.exe",
 ]
 
 [tasks.test-shader]

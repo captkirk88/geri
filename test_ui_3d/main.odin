@@ -440,6 +440,16 @@ sphere_ui_input_system :: proc(
 	state := state_res.ptr
 	if state == nil || window_res.ptr == nil do return
 
+	if !ecs.world_is_alive(world, state.canvas_entity) {
+		for arch in ecs.query(world, ui.UI_Canvas_Target) {
+			entities := ecs.arch_get_entities(arch)
+			if len(entities) > 0 {
+				state.canvas_entity = entities[0]
+				break
+			}
+		}
+	}
+
 	canvas_target := ecs.world_get_component(world, state.canvas_entity, ui.UI_Canvas_Target)
 	if canvas_target == nil do return
 
@@ -591,6 +601,8 @@ main :: proc() {
 	defer {
 		app.app_destroy(&application)
 	}
+
+	app.app_add_resource(&application, graphics.Clear_Color{r = 0.35, g = 0.35, b = 0.35})
 
 	app.app_add_system(&application, app.Startup, setup_system)
 	app.app_add_system(

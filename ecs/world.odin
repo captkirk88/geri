@@ -194,7 +194,12 @@ world_spawn :: proc(w: ^World) -> Entity {
 
 world_despawn :: proc(w: ^World, entity: Entity) {
 	id := u32(entity.id)
-	if int(id) >= len(w.entities) || w.entities.gen[id] != u32(entity.gen) do return
+	if int(id) >= len(w.entities) {
+		panic("world_despawn: Entity ID is out of bounds")
+	}
+	if w.entities.gen[id] != u32(entity.gen) {
+		panic("world_despawn: Entity generation mismatch")
+	}
 
 	record := w.entities.record[id]
 	arch := record.arch
@@ -315,7 +320,12 @@ _world_transition_type :: proc(
 	is_tag: bool,
 ) {
 	id := u32(entity.id)
-	if w.entities.gen[id] != u32(entity.gen) do return
+	if int(id) >= len(w.entities) {
+		panic("world_transition_type: Entity ID is out of bounds")
+	}
+	if w.entities.gen[id] != u32(entity.gen) {
+		panic("world_transition_type: Entity generation mismatch")
+	}
 
 	record := &w.entities.record[id]
 	current := record.arch
@@ -381,7 +391,12 @@ _world_transition_type :: proc(
 
 world_add_component :: proc(w: ^World, entity: Entity, component: $T) {
 	id := u32(entity.id)
-	if w.entities.gen[id] != u32(entity.gen) do return
+	if int(id) >= len(w.entities) {
+		panic("world_add_component: Entity ID is out of bounds")
+	}
+	if w.entities.gen[id] != u32(entity.gen) {
+		panic("world_add_component: Entity generation mismatch")
+	}
 
 	record := &w.entities.record[id]
 	current := record.arch
@@ -570,7 +585,12 @@ _migrate_entities_bulk :: proc(
 */
 world_remove_component :: proc(w: ^World, entity: Entity, tid: typeid) {
 	id := u32(entity.id)
-	if w.entities.gen[id] != u32(entity.gen) do return
+	if int(id) >= len(w.entities) {
+		panic("world_remove_component: Entity ID is out of bounds")
+	}
+	if w.entities.gen[id] != u32(entity.gen) {
+		panic("world_remove_component: Entity generation mismatch")
+	}
 
 	record := &w.entities.record[id]
 	current := record.arch

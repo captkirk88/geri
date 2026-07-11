@@ -405,12 +405,7 @@ main :: proc() {
 		draw_shader_system,
 		after = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
-	app.app_add_system(
-		&application,
-		app.Last,
-		cleanup_shader_system,
-		//before = []app.System_Dependency{rawptr(graphics.render_cleanup_system)},
-	)
+	app.app_add_system(&application, app.Last, cleanup_shader_system)
 
 	app.app_run_schedule(&application, app.Startup)
 

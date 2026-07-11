@@ -85,7 +85,7 @@ schedule_add_system :: proc(
 	after: []System_Dependency = nil,
 ) where intrinsics.type_is_proc(T) {
 
-	s := sys.new_system(procedure, w.allocator)
+	s := sys.new_system(procedure, allocator = w.allocator, name = name)
 
 	meta: System_Metadata
 	meta.system = s
