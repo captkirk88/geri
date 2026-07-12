@@ -590,15 +590,17 @@ main :: proc() {
 		}
 	}
 
-	application := errors.wrap(app.app_init(
-		[]app.Plugin {
-			windowing.Window_Plugin(),
-			graphics.Render_Plugin(),
-			fps.Fps_Plugin(.Uncapped),
-			input.Input_Plugin(),
-			ui.UI_Plugin(),
-		},
-	))
+	application := errors.unwrap(
+		app.app_init(
+			[]app.Plugin {
+				windowing.Window_Plugin(),
+				graphics.Render_Plugin(),
+				fps.Fps_Plugin(.Uncapped),
+				input.Input_Plugin(),
+				ui.UI_Plugin(),
+			},
+		),
+	)
 	defer {
 		app.app_destroy(&application)
 	}

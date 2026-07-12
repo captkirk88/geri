@@ -41,8 +41,8 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 	},
 	) {
 		err_cstr := sdl3.GetError()
-		defer delete_cstring(err_cstr)
-		err_str, _ := strings.clone_from_cstring(err_cstr)
+		defer delete(err_cstr)
+		err_str := strings.clone_from_cstring(err_cstr)
 		return errors.new_fmt("Failed to initialize SDL: %s", err_str), false
 	}
 
@@ -53,8 +53,8 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 	window := sdl3.CreateWindow(cstring(raw_data(desc.title)), desc.width, desc.height, flags)
 	if window == nil {
 		err_cstr := sdl3.GetError()
-		defer delete_cstring(err_cstr)
-		err_str, _ := strings.clone_from_cstring(err_cstr)
+		defer delete(err_cstr)
+		err_str := strings.clone_from_cstring(err_cstr)
 		return errors.new_fmt("Failed to create SDL window: %s", err_str), false
 	}
 

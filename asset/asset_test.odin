@@ -1,17 +1,21 @@
 package asset
 
-import "core:testing"
-import "core:io"
-import "core:strings"
-import "core:os"
-import "base:runtime"
 import errors "../errors"
+import "base:runtime"
+import "core:io"
+import "core:os"
+import "core:strings"
+import "core:testing"
 
 TextAsset :: struct {
 	content: string,
 }
 
-text_loader_proc :: proc(reader: io.Reader, settings: rawptr, allocator: runtime.Allocator) -> errors.Result(rawptr, errors.Error) {
+text_loader_proc :: proc(
+	reader: io.Reader,
+	settings: rawptr,
+	allocator: runtime.Allocator,
+) -> errors.Result(rawptr, errors.Error) {
 	buf: [1024]u8
 	n, err := io.read(reader, buf[:])
 	if err != nil && err != .EOF do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Loader_Error)}
@@ -28,7 +32,9 @@ test_asset_lifecycle :: proc(t: ^testing.T) {
 	defer asset_server_destroy(&server)
 
 	mgr: AssetManager(TextAsset)
-	loader := AssetLoader { load = text_loader_proc }
+	loader := AssetLoader {
+		load = text_loader_proc,
+	}
 	asset_manager_init(&mgr, loader)
 	defer {
 		for _, val in mgr.assets {
@@ -56,7 +62,7 @@ test_asset_lifecycle :: proc(t: ^testing.T) {
 	// Load typed
 	res := asset_server_load(&server, "mods://hello.txt", TextAsset)
 	testing.expect(t, errors.is_ok(res))
-	asset_ptr := errors.wrap(res)
+	asset_ptr := errors.unwrap(res)
 	testing.expect(t, asset_ptr != nil)
 	testing.expect_value(t, asset_ptr.content, "Hello Geri!")
 
@@ -64,7 +70,7 @@ test_asset_lifecycle :: proc(t: ^testing.T) {
 	asset_server_register_extension(&server, ".txt", typeid_of(TextAsset))
 	untyped_res := asset_server_load_untyped(&server, "mods://hello.txt")
 	testing.expect(t, errors.is_ok(untyped_res))
-	untyped_ptr := errors.wrap(untyped_res)
+	untyped_ptr := errors.unwrap(untyped_res)
 	testing.expect(t, untyped_ptr != nil)
 	testing.expect_value(t, (^TextAsset)(untyped_ptr).content, "Hello Geri!")
 }

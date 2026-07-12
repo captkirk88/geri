@@ -29,7 +29,14 @@ is_err :: proc(rs: Result($T, $E)) -> bool {
 	return !is_ok(rs)
 }
 
-wrap :: proc(rs: Result($T, $E)) -> T {
+unwrap :: proc {
+	unwrap_val,
+	unwrap_or,
+	unwrap_orelse,
+	unwrap_err,
+}
+
+unwrap_val :: proc(rs: Result($T, $E)) -> T {
 	result: T
 	switch v in rs {
 	case Err(E):

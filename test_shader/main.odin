@@ -199,7 +199,7 @@ setup_system :: proc(
 	blob_batch := graphics.init_batch3d(ctx.device, ctx.config.format)
 	shader_comp := Blob {
 		compute_pass = compute_pass,
-		render_pass  = render_pass,
+		render_pass  = errors.unwrap(render_pass),
 		batch        = blob_batch,
 		time         = 0.0,
 	}
@@ -394,14 +394,16 @@ main :: proc() {
 		gmem.tracker_destroy(&global_tracker)
 	}
 
-	application := errors.wrap(app.app_init(
-		[]app.Plugin {
-			windowing.Window_Plugin(),
-			graphics.Render_Plugin(),
-			fps.Fps_Plugin(),
-			threeD.Gizmo_Plugin_3D(),
-		},
-	))
+	application := errors.unwrap(
+		app.app_init(
+			[]app.Plugin {
+				windowing.Window_Plugin(),
+				graphics.Render_Plugin(),
+				fps.Fps_Plugin(),
+				threeD.Gizmo_Plugin_3D(),
+			},
+		),
+	)
 	defer {
 		app.app_destroy(&application)
 	}

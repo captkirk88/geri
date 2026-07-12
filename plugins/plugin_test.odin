@@ -1,9 +1,9 @@
 package plugins
 
-import "core:testing"
 import "../app"
 import ecs "../ecs"
 import errors "../errors"
+import "core:testing"
 
 Config_A :: struct {
 	value: int,
@@ -12,7 +12,7 @@ Config_A :: struct {
 @(test)
 test_plugin_lifecycle :: proc(t: ^testing.T) {
 	Plugin_State :: struct {
-		build_called: bool,
+		build_called:   bool,
 		destroy_called: bool,
 	}
 
@@ -34,7 +34,7 @@ test_plugin_lifecycle :: proc(t: ^testing.T) {
 
 	// Initialize the app passing the plugin.
 	// The plugin should be built and destroyed during app_init.
-	a := errors.wrap(app.app_init({plugin}))
+	a := errors.unwrap(app.app_init({plugin}))
 	defer app.app_destroy(&a)
 
 	testing.expect(t, state.build_called)

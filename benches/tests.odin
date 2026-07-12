@@ -12,8 +12,8 @@ import app "../app"
 import bench "../benchmark"
 import "../ecs"
 import "../ecs/params"
-import errors "../errors"
 import systems "../ecs/systems"
+import errors "../errors"
 import log "../logging"
 
 benchmark_spawn :: proc(t: ^testing.T) {
@@ -588,7 +588,7 @@ benchmark_app_schedules :: proc(t: ^testing.T) {
 			allocator: mem.Allocator,
 		) -> time.Benchmark_Error {
 			data := new(bench_data, allocator)
-			data.application = errors.wrap(app_init(allocator = allocator))
+			data.application = errors.unwrap(app_init(allocator = allocator))
 
 			// Create entities
 			entities := make([]ecs.Entity, 100_000, allocator)

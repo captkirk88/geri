@@ -23,7 +23,7 @@ Test_Context :: struct {
 
 @(test)
 test_schedule_conflicts_and_ordering :: proc(t: ^testing.T) {
-	app := errors.wrap(app_init())
+	app := errors.unwrap(app_init())
 	defer app_destroy(&app)
 
 	ecs.world_add_resource(&app.world, Config_A{10})
@@ -72,7 +72,7 @@ test_schedule_conflicts_and_ordering :: proc(t: ^testing.T) {
 
 @(test)
 test_explicit_ordering :: proc(t: ^testing.T) {
-	app := errors.wrap(app_init())
+	app := errors.unwrap(app_init())
 	defer app_destroy(&app)
 
 	ctx := Test_Context{}
@@ -92,12 +92,7 @@ test_explicit_ordering :: proc(t: ^testing.T) {
 		}
 	}
 
-	app_add_system(
-		&app,
-		Update,
-		sys_second,
-		after = []System_Dependency{rawptr(sys_first)},
-	)
+	app_add_system(&app, Update, sys_second, after = []System_Dependency{rawptr(sys_first)})
 	app_add_system(&app, Update, sys_first)
 
 	app_run_schedule(&app, Update)
@@ -116,7 +111,7 @@ test_explicit_ordering :: proc(t: ^testing.T) {
 
 @(test)
 test_custom_schedules :: proc(t: ^testing.T) {
-	app := errors.wrap(app_init())
+	app := errors.unwrap(app_init())
 	defer app_destroy(&app)
 
 	Custom_Label: Schedule_Label : "MyCustomSchedule"
@@ -152,7 +147,7 @@ test_custom_schedules :: proc(t: ^testing.T) {
 
 @(test)
 test_render_schedule_main_thread :: proc(t: ^testing.T) {
-	app := errors.wrap(app_init())
+	app := errors.unwrap(app_init())
 	defer app_destroy(&app)
 
 	Render_Label: Schedule_Label : "MyCustomRenderSchedule"
@@ -188,7 +183,7 @@ test_render_schedule_main_thread :: proc(t: ^testing.T) {
 
 @(test)
 test_modify_system :: proc(t: ^testing.T) {
-	app := errors.wrap(app_init())
+	app := errors.unwrap(app_init())
 	defer app_destroy(&app)
 
 	ctx := Test_Context{}
