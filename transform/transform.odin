@@ -7,25 +7,25 @@ Transform :: struct {
 	world_matrix: linalg.Matrix4f32,
 }
 
-init :: proc(t: ^Transform) {
+init :: proc "contextless" (t: ^Transform) {
 	t.world_matrix = linalg.MATRIX4F32_IDENTITY
 }
 
-set_translation :: proc(t: ^Transform, translation: [3]f32) {
+set_translation :: proc "contextless" (t: ^Transform, translation: [3]f32) {
 	t.world_matrix[3].xyz = translation
 }
 
-get_translation :: proc(t: Transform) -> [3]f32 {
+get_translation :: proc "contextless" (t: Transform) -> [3]f32 {
 	return t.world_matrix[3].xyz
 }
 
-set_scale :: proc(t: ^Transform, scale: [3]f32) {
+set_scale :: proc "contextless" (t: ^Transform, scale: [3]f32) {
 	t.world_matrix[0].xyz = linalg.vector_normalize(t.world_matrix[0].xyz) * scale.x
 	t.world_matrix[1].xyz = linalg.vector_normalize(t.world_matrix[1].xyz) * scale.y
 	t.world_matrix[2].xyz = linalg.vector_normalize(t.world_matrix[2].xyz) * scale.z
 }
 
-get_scale :: proc(t: Transform) -> [3]f32 {
+get_scale :: proc "contextless" (t: Transform) -> [3]f32 {
 	return {
 		linalg.vector_length(t.world_matrix[0].xyz),
 		linalg.vector_length(t.world_matrix[1].xyz),
@@ -33,7 +33,7 @@ get_scale :: proc(t: Transform) -> [3]f32 {
 	}
 }
 
-set_rotation :: proc(t: ^Transform, q: linalg.Quaternionf32) {
+set_rotation :: proc "contextless" (t: ^Transform, q: linalg.Quaternionf32) {
 	scale := get_scale(t^)
 	rot_mat := linalg.matrix4_from_quaternion_f32(q)
 	t.world_matrix[0].xyz = rot_mat[0].xyz * scale.x
@@ -41,7 +41,7 @@ set_rotation :: proc(t: ^Transform, q: linalg.Quaternionf32) {
 	t.world_matrix[2].xyz = rot_mat[2].xyz * scale.z
 }
 
-get_rotation :: proc(t: Transform) -> linalg.Quaternionf32 {
+get_rotation :: proc "contextless" (t: Transform) -> linalg.Quaternionf32 {
 	scale := get_scale(t)
 	m := linalg.MATRIX4F32_IDENTITY
 	if scale.x != 0.0 do m[0].xyz = t.world_matrix[0].xyz / scale.x
@@ -50,16 +50,16 @@ get_rotation :: proc(t: Transform) -> linalg.Quaternionf32 {
 	return linalg.quaternion_from_matrix4(m)
 }
 
-translate :: proc(t: ^Transform, offset: [3]f32) {
+translate :: proc "contextless" (t: ^Transform, offset: [3]f32) {
 	t.world_matrix[3].xyz += offset
 }
 
-rotate_local :: proc(t: ^Transform, q: linalg.Quaternionf32) {
+rotate_local :: proc "contextless" (t: ^Transform, q: linalg.Quaternionf32) {
 	rot_mat := linalg.matrix4_from_quaternion_f32(q)
 	t.world_matrix = t.world_matrix * rot_mat
 }
 
-rotate_world :: proc(t: ^Transform, q: linalg.Quaternionf32) {
+rotate_world :: proc "contextless" (t: ^Transform, q: linalg.Quaternionf32) {
 	rot_mat := linalg.matrix4_from_quaternion_f32(q)
 	pos := t.world_matrix[3].xyz
 	t.world_matrix[3].xyz = 0

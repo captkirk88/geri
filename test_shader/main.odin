@@ -13,6 +13,7 @@ import "core:time"
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import "../input"
 import errors "../errors"
 import fps "../fps"
 import graphics "../graphics"
@@ -28,19 +29,23 @@ import "vendor:wgpu"
 
 // Component to store shader pass states and simulation time
 Blob :: struct {
-	compute_pass: graphics.Shader_Pass,
-	render_pass:  graphics.Shader_Pass,
-	batch:        graphics.Batch3D,
-	time:         f32,
-	vertex_count: int,
-	index_count:  int,
+	compute_pass:  graphics.Shader_Pass,
+	render_pass:   graphics.Shader_Pass,
+	batch:         graphics.Batch3D,
+	time:          f32,
+	vertex_count:  int,
+	index_count:   int,
+	ripple_origin: [3]f32,
+	ripple_t:      f32,
 }
 
 MyUniforms :: struct {
-	time:      f32,
-	intensity: f32,
-	aspect:    f32,
-	padding:   f32,
+	time:             f32,
+	intensity:        f32,
+	aspect:           f32,
+	padding:          f32,
+	ripple_pos:       [3]f32,
+	ripple_intensity: f32,
 }
 
 // Compute shader to deform vertices along sphere normal to create a jelly blob effect
@@ -59,6 +64,8 @@ struct MyUniforms {
     intensity: f32,
 	aspect: f32,
 	padding: f32,
+    ripple_pos: vec3<f32>,
+    ripple_intensity: f32,
 }
 @group(0) @binding(0) var<storage, read_write> vertices: array<Vertex>;
 @group(0) @binding(1) var<storage, read_write> indices: array<u32>;
@@ -90,7 +97,14 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                cos(original_pos.y * 6.0 + uniforms.time * 2.0) * 
                sin(original_pos.z * 6.0 + uniforms.time * 3.0);
                
-    let displacement = wave * 0.08 * uniforms.intensity;
+    // Calculate ripple effect if intensity is > 0
+    var ripple: f32 = 0.0;
+    if (uniforms.ripple_intensity > 0.0) {
+        let dist = distance(original_pos, uniforms.ripple_pos);
+        ripple = sin(dist * 25.0 - uniforms.time * 8.0) * exp(-dist * 3.0) * uniforms.ripple_intensity;
+    }
+                
+    let displacement = wave * 0.08 * uniforms.intensity + ripple * 0.15;
     let new_pos = normal * (base_radius + displacement);
     
     vertices[index].pos_x = new_pos.x;
@@ -100,7 +114,7 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Animate color based on time and wave displacement using the stable original position
     vertices[index].color_r = 0.1 + 0.6 * (0.5 + 0.5 * cos(uniforms.time + original_pos.x * 3.0));
     vertices[index].color_g = 0.3 + 0.5 * (0.5 + 0.5 * sin(uniforms.time + original_pos.y * 3.0));
-    vertices[index].color_b = 0.5 + 0.5 * (0.5 + 0.5 * sin(uniforms.time * 1.5 + wave));
+    vertices[index].color_b = 0.5 + 0.5 * (0.5 + 0.5 * sin(uniforms.time * 1.5 + wave + ripple * 2.0));
     vertices[index].color_a = 1.0;
 }
 `
@@ -121,6 +135,8 @@ struct MyUniforms {
     intensity: f32,
 	aspect: f32,
 	padding: f32,
+    ripple_pos: vec3<f32>,
+    ripple_intensity: f32,
 }
 @group(0) @binding(0) var<uniform> uniforms: MyUniforms;
 
@@ -172,7 +188,7 @@ setup_system :: proc(
 		"fs_main",
 		true, // is_3d = true
 		ctx.config.format,
-		16,
+		size_of(MyUniforms),
 	)
 	if errors.is_err(render_res) {
 		log.error("Failed to compile 3D Render Shader Pass.")
@@ -186,7 +202,7 @@ setup_system :: proc(
 		ctx.device,
 		strings.to_reader(&compute_r, COMPUTE_SHADER),
 		"cs_main",
-		16,
+		size_of(MyUniforms),
 	)
 	if errors.is_err(compute_res) {
 		log.error("Failed to compile Compute Shader Pass.")
@@ -194,8 +210,6 @@ setup_system :: proc(
 		return
 	}
 	compute_pass := errors.unwrap(compute_res)
-
-	log.info("Shader passes compiled successfully!")
 
 	// 3. Spawn Shader Entity with Transform and Gizmo3D
 	blob_batch := graphics.init_batch3d(ctx.device, ctx.config.format)
@@ -229,6 +243,7 @@ setup_system :: proc(
 
 	cam_ent := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(cam_ent, cam, cam_t)
+	// ecs.entity_commands_add_component(cam_ent, gizmo) // TODO: fix the sizing issue to be relative of attached entity
 
 	// 5. Register Clear_Color resource to clear screen at beginning of frame
 	clear_color := graphics.Clear_Color{0.05, 0.08, 0.12, 1.0}
@@ -239,6 +254,8 @@ draw_shader_system :: proc(
 	render_ctx_res: params.Res(graphics.Render_Context),
 	frame_ctx_res: params.Res(graphics.Frame_Context),
 	window_ctx_res: params.Res(windowing.Window_Context),
+	win_desc_res: params.Res(windowing.Window_Descriptor),
+	input_state_res: params.Res(input.Input_State),
 	shader_param: params.Single(Blob),
 ) {
 	render_ctx := render_ctx_res.ptr
@@ -246,6 +263,7 @@ draw_shader_system :: proc(
 	shader_data := shader_param.value
 	batch := &shader_data.batch
 	window_ctx := window_ctx_res.ptr
+	input_state := input_state_res.ptr
 
 	if render_ctx == nil || render_ctx.device == nil || frame_ctx.encoder == nil || frame_ctx.texture_view == nil do return
 	if shader_data == nil do return
@@ -259,11 +277,40 @@ draw_shader_system :: proc(
 
 	// 1. Update uniforms (time, intensity, aspect, padding)
 	shader_data.time += 0.016
+	shader_data.ripple_t += 0.016
+
+	if input_state != nil {
+		if input_state.mouse_buttons_pressed[.Left] {
+			ref_w, ref_h: f32 = 800.0, 600.0
+			if win_desc_res.ptr != nil {
+				ref_w = f32(win_desc_res.ptr.width)
+				ref_h = f32(win_desc_res.ptr.height)
+			}
+
+			mouse_pos := input_state.mouse_position
+			ndc := input.screen_to_ndc(mouse_pos, {ref_w, ref_h})
+
+			world_x := ndc.x * aspect
+			world_y := ndc.y
+			radius := f32(0.55)
+			dist_sq := world_x * world_x + world_y * world_y
+			if dist_sq <= radius * radius {
+				z := -math.sqrt(radius * radius - dist_sq)
+				shader_data.ripple_origin = {world_x, world_y, z}
+				shader_data.ripple_t = 0.0
+			}
+		}
+	}
+
+	ripple_intensity := math.max(f32(0.0), 1.0 - shader_data.ripple_t * 1.5)
+
 	uniforms := MyUniforms {
-		time      = shader_data.time,
-		intensity = 1.0,
-		aspect    = aspect,
-		padding   = 0.0,
+		time             = shader_data.time,
+		intensity        = 1.0,
+		aspect           = aspect,
+		padding          = 0.0,
+		ripple_pos       = shader_data.ripple_origin,
+		ripple_intensity = ripple_intensity,
 	}
 
 	graphics.shader_pass_update_uniforms(&shader_data.compute_pass, render_ctx, uniforms)
@@ -401,6 +448,7 @@ main :: proc() {
 			[]app.Plugin {
 				windowing.Window_Plugin(),
 				graphics.Render_Plugin(),
+				input.Input_Plugin(),
 				fps.Fps_Plugin(),
 				threeD.Gizmo_Plugin_3D(),
 			},

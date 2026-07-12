@@ -418,3 +418,24 @@ input_state_destroy :: proc(state: ^Input_State) {
 
 	delete(state.targets)
 }
+
+Coordinate_System :: enum {
+	// standard OpenGL/WGPU NDC: X=[-1, 1] right, Y=[-1, 1] up
+	NDC_Y_Up,
+	// standard Vulkan: X=[-1, 1] right, Y=[-1, 1] down
+	NDC_Y_Down,
+}
+
+// Convert screen coordinates to NDC (Normalized Device Coordinate) coordinates
+screen_to_ndc :: proc "contextless" (
+	screen_pos: [2]f32,
+	window_size: [2]f32,
+	system: Coordinate_System = .NDC_Y_Up,
+) -> [2]f32 {
+	x := (screen_pos.x / window_size.x) * 2.0 - 1.0
+	y := (screen_pos.y / window_size.y) * 2.0 - 1.0
+	if system == .NDC_Y_Up {
+		y = -y
+	}
+	return {x, y}
+}

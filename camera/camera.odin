@@ -11,27 +11,38 @@ Camera :: struct {
 	projection: linalg.Matrix4f32,
 }
 
-init :: proc(c: ^Camera) {
+init :: proc "contextless" (c: ^Camera) {
 	c.target = {0, 0, 0}
 	c.up = {0, 1, 0}
 	c.projection = linalg.MATRIX4F32_IDENTITY
 }
 
-set_perspective :: proc(c: ^Camera, fovy_rad, aspect, near, far: f32) {
-	c.projection = linalg.matrix4_perspective_f32(fovy_rad, aspect, near, far)
+set_perspective :: proc "contextless" (
+	c: ^Camera,
+	fovy_rad, aspect, near, far: f32,
+	flip_z: bool = true,
+) {
+	c.projection = linalg.matrix4_perspective_f32(fovy_rad, aspect, near, far, flip_z)
 }
 
-set_orthographic :: proc(c: ^Camera, left, right, bottom, top, near, far: f32) {
-	c.projection = linalg.matrix_ortho3d_f32(left, right, bottom, top, near, far)
+set_orthographic :: proc "contextless" (
+	c: ^Camera,
+	left, right, bottom, top, near, far: f32,
+	flip_z: bool = true,
+) {
+	c.projection = linalg.matrix_ortho3d_f32(left, right, bottom, top, near, far, flip_z)
 }
 
-get_view_projection :: proc(c: Camera, t: transform.Transform) -> linalg.Matrix4f32 {
+get_view_projection :: proc "contextless" (
+	c: Camera,
+	t: transform.Transform,
+) -> linalg.Matrix4f32 {
 	position := transform.get_translation(t)
 	view := linalg.matrix4_look_at_f32(position, c.target, c.up)
 	return c.projection * view
 }
 
-project_point :: proc(c: Camera, t: transform.Transform, point: [3]f32) -> [3]f32 {
+project_point :: proc "contextless" (c: Camera, t: transform.Transform, point: [3]f32) -> [3]f32 {
 	vp := get_view_projection(c, t)
 	p4 := [4]f32{point.x, point.y, point.z, 1.0}
 	res4 := vp * p4

@@ -34,10 +34,6 @@ Circle :: struct {
 	color:  [4]f32,
 }
 
-Position2D :: struct {
-	x, y: f32,
-}
-
 Velocity2D :: struct {
 	x, y: f32,
 }
@@ -114,10 +110,14 @@ setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing
 		vx := rand.float32_range(-150, 150)
 		vy := rand.float32_range(-150, 150)
 
+		t: transform.Transform
+		transform.init(&t)
+		transform.set_translation(&t, {fx, fy, 0})
+
 		ec := ecs.commands_spawn(commands.ptr)
 		ecs.entity_commands_add_components(
 			ec,
-			Position2D{x = fx, y = fy},
+			t,
 			Velocity2D{x = vx, y = vy},
 			Circle{radius = 15.0, color = {r, g, b, 1.0}},
 		)
@@ -152,14 +152,14 @@ draw_circles_system :: proc(
 		vp = camera.get_view_projection(cam_param.value^, t^)
 	}
 
-	for arch in ecs.query(world, Position2D, Circle) {
-		positions := ecs.arch_get_field(arch, Position2D)
+	for arch in ecs.query(world, transform.Transform, Circle) {
+		transforms := ecs.arch_get_field(arch, transform.Transform)
 		circles := ecs.arch_get_field(arch, Circle)
 
-		for i in 0 ..< len(positions) {
-			pos := positions[i]
+		for i in 0 ..< len(transforms) {
+			pos := transform.get_translation(transforms[i])
 			circle := circles[i]
-			append_circle(batch, {pos.x, pos.y}, circle.radius, circle.color, vp)
+			append_circle(batch, pos.xy, circle.radius, circle.color, vp)
 		}
 	}
 
@@ -266,14 +266,15 @@ movement_system :: proc(
 		dt = 1.0 / 60.0
 	}
 
-	for arch in ecs.query(world, Position2D, Velocity2D) {
-		positions := ecs.arch_get_field(arch, Position2D)
+	for arch in ecs.query(world, transform.Transform, Velocity2D) {
+		transforms := ecs.arch_get_field(arch, transform.Transform)
 		velocities := ecs.arch_get_field(arch, Velocity2D)
 
-		for i in 0 ..< len(positions) {
-			pos := &positions[i]
+		for i in 0 ..< len(transforms) {
+			t := &transforms[i]
 			vel := &velocities[i]
 
+			pos := transform.get_translation(t^)
 			pos.x += vel.x * dt
 			pos.y += vel.y * dt
 
@@ -295,6 +296,8 @@ movement_system :: proc(
 				pos.y = half_h - radius
 				vel.y = -vel.y
 			}
+
+			transform.set_translation(t, pos)
 		}
 	}
 }

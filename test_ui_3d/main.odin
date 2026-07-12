@@ -459,11 +459,10 @@ sphere_ui_input_system :: proc(
 	if w <= 0 || h <= 0 do return
 
 	mpos := input.mouse_position(mouse_inp)
-	ndc_x := (mpos.x / f32(w)) * 2.0 - 1.0
-	ndc_y := 1.0 - (mpos.y / f32(h)) * 2.0
+	ndc := input.screen_to_ndc(mpos, {f32(w), f32(h)})
 
-	local_x := (ndc_x - state.center_ndc.x) / state.radius_ndc
-	local_y := (ndc_y - state.center_ndc.y) / state.radius_ndc
+	local_x := (ndc.x - state.center_ndc.x) / state.radius_ndc
+	local_y := (ndc.y - state.center_ndc.y) / state.radius_ndc
 	r2 := local_x * local_x + local_y * local_y
 
 	if r2 <= 1.0 {

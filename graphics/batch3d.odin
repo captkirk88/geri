@@ -29,10 +29,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 `
 
-// init_batch3d initializes a 3D batching context, creating CPU dynamic arrays
+// Initializes a 3D batching context, creating CPU dynamic arrays
 // and the default WGPU Render Pipeline. An optional shader source can be provided
 // to override the built-in default WGSL shader.
-init_batch3d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Shader_Source = nil) -> Batch3D {
+init_batch3d :: proc(
+	device: wgpu.Device,
+	format: wgpu.TextureFormat,
+	source: Shader_Source = nil,
+) -> Batch3D {
 	batch := Batch3D{}
 	batch.vertices = make([dynamic]Vertex3D)
 	batch.indices = make([dynamic]u32)
@@ -42,7 +46,9 @@ init_batch3d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Sh
 	if source != nil {
 		effective_source = source
 	} else {
-		effective_source = Shader_Source_WGSL{code = DEFAULT_SHADER_3D}
+		effective_source = Shader_Source_WGSL {
+			code = DEFAULT_SHADER_3D,
+		}
 	}
 	shader := shader_module_from_source(device, effective_source)
 	defer wgpu.ShaderModuleRelease(shader)
@@ -205,12 +211,12 @@ batch3d_draw_buffers :: proc(batch: ^Batch3D, pass: wgpu.RenderPassEncoder, inde
 	vert_size := u64(len(batch.vertices) * size_of(Vertex3D))
 	if vert_size == 0 do vert_size = u64(batch.vert_buf_cap)
 	call := Indexed_Draw_Call {
-		pipeline = pipeline,
-		bind_group = bind_group,
-		vertex_buf = batch.vertex_buf,
+		pipeline    = pipeline,
+		bind_group  = bind_group,
+		vertex_buf  = batch.vertex_buf,
 		vertex_size = vert_size,
-		index_buf = batch.index_buf,
-		index_size = u64(batch.ind_buf_cap),
+		index_buf   = batch.index_buf,
+		index_size  = u64(batch.ind_buf_cap),
 		index_count = index_count,
 	}
 	render_draw_indexed_call(pass, call)
