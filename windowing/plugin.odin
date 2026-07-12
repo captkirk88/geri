@@ -3,6 +3,7 @@ package windowing
 import "../app"
 import "../ecs"
 import params "../ecs/params"
+import errors "../errors"
 import "core:log"
 import "core:strconv"
 import "core:strings"
@@ -17,7 +18,7 @@ DEFAULT_WINDOW_DESCRIPTOR :: Window_Descriptor {
 	fullscreen = false,
 }
 
-window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
+window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, ok: bool) {
 	desc := ecs.world_get_resource(&a.world, Window_Descriptor)
 	if desc == nil {
 		d := DEFAULT_WINDOW_DESCRIPTOR
@@ -28,15 +29,21 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		desc = ecs.world_get_resource(&a.world, Window_Descriptor)
 	}
 
-	if !sdl3.Init({.VIDEO, .GAMEPAD, .AUDIO, .JOYSTICK, .HAPTIC, .SENSOR, .EVENTS}) {
+	if !sdl3.Init(
+	{
+		.VIDEO,
+		.GAMEPAD,
+		.AUDIO,
+		.JOYSTICK, // TODO: Not sure if this should be impl because not a lot of people use a joystick anymore
+		.HAPTIC, // TODO: haptic feedback: this would provide vibration of the controller or mouse if it is supported
+		.SENSOR, // TODO: gyros and accelerometers which I imagine would be useful for phones, VR, and devices that support it
+		.EVENTS,
+	},
+	) {
 		err_cstr := sdl3.GetError()
 		defer delete_cstring(err_cstr)
-		err_str, err := strings.clone_from_cstring(err_cstr)
-		if err != nil {
-			err_str = "Unknown SDL initialization error"
-		}
-		log.error("Failed to initialize SDL: %s", err_str)
-		return
+		err_str, _ := strings.clone_from_cstring(err_cstr)
+		return errors.new_fmt("Failed to initialize SDL: %s", err_str), false
 	}
 
 	flags: sdl3.WindowFlags
@@ -44,12 +51,19 @@ window_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	if desc.fullscreen do flags += {.FULLSCREEN}
 
 	window := sdl3.CreateWindow(cstring(raw_data(desc.title)), desc.width, desc.height, flags)
+	if window == nil {
+		err_cstr := sdl3.GetError()
+		defer delete_cstring(err_cstr)
+		err_str, _ := strings.clone_from_cstring(err_cstr)
+		return errors.new_fmt("Failed to create SDL window: %s", err_str), false
+	}
 
 	app.app_add_resource(a, Window_Context{window = window})
 
 	// Add event pump system
 	app.app_add_system(a, app.First, event_pump_system)
 	app.app_add_system(a, app.Last, window_cleanup_system)
+	return {}, true
 }
 
 @(tag = "system")

@@ -13,6 +13,7 @@ import "vendor:sdl3"
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import errors "../errors"
 import fps "../fps"
 import graphics "../graphics"
 import twoD "../graphics/2d"
@@ -540,7 +541,7 @@ main :: proc() {
 		}
 	}
 
-	application := app.app_init(
+	application := errors.wrap(app.app_init(
 		[]app.Plugin {
 			windowing.Window_Plugin(),
 			graphics.Render_Plugin(),
@@ -548,7 +549,7 @@ main :: proc() {
 			input.Input_Plugin(),
 			ui.UI_Plugin(),
 		},
-	)
+	))
 	defer {
 		app.app_destroy(&application)
 	}

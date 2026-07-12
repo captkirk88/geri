@@ -4,6 +4,7 @@ import "../app"
 import camera "../camera"
 import "../ecs"
 import "../ecs/params"
+import errors "../errors"
 import log "../logging"
 import "../windowing"
 import "base:runtime"
@@ -50,14 +51,10 @@ _on_device :: proc "c" (
 	}
 }
 
-render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
+render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, ok: bool) {
 	window_ctx := ecs.world_get_resource(&a.world, windowing.Window_Context)
 	if window_ctx == nil || window_ctx.window == nil {
-		// TODO allow without WindowPlugin where surface is populated with a empty surface
-		log.error(
-			"Render_Plugin requires Window_Context to be initialized first. Did you forget to add Window_Plugin?",
-		)
-		return
+		return errors.new("Render_Plugin requires Window_Context to be initialized first. Did you forget to add Window_Plugin?"), false
 	}
 
 	instance_extras := wgpu.InstanceExtras {
@@ -69,8 +66,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	}
 	instance := wgpu.CreateInstance(&instance_desc)
 	if instance == nil {
-		log.error("Failed to create WGPU Instance.")
-		return
+		return errors.new("Failed to create WGPU Instance."), false
 	}
 
 	surface := sdl3glue.GetSurface(instance, window_ctx.window)
@@ -88,8 +84,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	)
 
 	if req_data.adapter == nil {
-		log.error("Failed to get WGPU Adapter.")
-		return
+		return errors.new("Failed to get WGPU Adapter."), false
 	}
 
 	device_desc := wgpu.DeviceDescriptor {
@@ -104,8 +99,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	)
 
 	if req_data.device == nil {
-		log.error("Failed to get WGPU Device.")
-		return
+		return errors.new("Failed to get WGPU Device."), false
 	}
 
 	queue := wgpu.DeviceGetQueue(req_data.device)
@@ -162,6 +156,7 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 	app.app_add_system(a, app.PostRender, frame_present_system)
 	app.app_add_system(a, app.Last, render_cleanup_system)
 	app.app_add_system(a, app.First, handle_resize_system) // To resize surface
+	return {}, true
 }
 
 @(tag = "system")

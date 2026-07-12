@@ -3,6 +3,7 @@ package app
 import ecs "../ecs"
 import params "../ecs/params"
 import sys "../ecs/systems"
+import errors "../errors"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -22,7 +23,7 @@ Test_Context :: struct {
 
 @(test)
 test_schedule_conflicts_and_ordering :: proc(t: ^testing.T) {
-	app := app_init()
+	app := errors.wrap(app_init())
 	defer app_destroy(&app)
 
 	ecs.world_add_resource(&app.world, Config_A{10})
@@ -71,7 +72,7 @@ test_schedule_conflicts_and_ordering :: proc(t: ^testing.T) {
 
 @(test)
 test_explicit_ordering :: proc(t: ^testing.T) {
-	app := app_init()
+	app := errors.wrap(app_init())
 	defer app_destroy(&app)
 
 	ctx := Test_Context{}
@@ -115,7 +116,7 @@ test_explicit_ordering :: proc(t: ^testing.T) {
 
 @(test)
 test_custom_schedules :: proc(t: ^testing.T) {
-	app := app_init()
+	app := errors.wrap(app_init())
 	defer app_destroy(&app)
 
 	Custom_Label: Schedule_Label : "MyCustomSchedule"
@@ -151,7 +152,7 @@ test_custom_schedules :: proc(t: ^testing.T) {
 
 @(test)
 test_render_schedule_main_thread :: proc(t: ^testing.T) {
-	app := app_init()
+	app := errors.wrap(app_init())
 	defer app_destroy(&app)
 
 	Render_Label: Schedule_Label : "MyCustomRenderSchedule"
@@ -187,7 +188,7 @@ test_render_schedule_main_thread :: proc(t: ^testing.T) {
 
 @(test)
 test_modify_system :: proc(t: ^testing.T) {
-	app := app_init()
+	app := errors.wrap(app_init())
 	defer app_destroy(&app)
 
 	ctx := Test_Context{}

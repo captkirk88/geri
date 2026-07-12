@@ -13,6 +13,7 @@ import "core:time"
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import errors "../errors"
 import fps "../fps"
 import graphics "../graphics"
 import threeD "../graphics/3d"
@@ -393,14 +394,14 @@ main :: proc() {
 		gmem.tracker_destroy(&global_tracker)
 	}
 
-	application := app.app_init(
+	application := errors.wrap(app.app_init(
 		[]app.Plugin {
 			windowing.Window_Plugin(),
 			graphics.Render_Plugin(),
 			fps.Fps_Plugin(),
 			threeD.Gizmo_Plugin_3D(),
 		},
-	)
+	))
 	defer {
 		app.app_destroy(&application)
 	}

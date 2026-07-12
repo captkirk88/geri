@@ -2,6 +2,7 @@ package ui
 
 import "../app"
 import "../ecs"
+import errors "../errors"
 import graphics "../graphics"
 import "base:runtime"
 
@@ -9,7 +10,7 @@ UI_Plugin :: proc() -> app.Plugin {
 	return app.Plugin{build = ui_plugin_build, destroy = nil, data = nil}
 }
 
-ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
+ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, ok: bool) {
 	state: UI_State
 	ui_state_init(&state)
 	ecs.world_add_resource(&a.world, state, proc(s: ^UI_State, alloc: runtime.Allocator) {
@@ -31,6 +32,7 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 		ui_render_system,
 		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
+	return {}, true
 }
 
 ui_state_init :: proc(state: ^UI_State, allocator := context.allocator) {

@@ -13,6 +13,7 @@ import "core:time"
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import errors "../errors"
 import fps "../fps"
 import graphics "../graphics"
 import log "../logging"
@@ -318,13 +319,13 @@ main :: proc() {
 		}
 	}
 
-	application := app.app_init(
+	application := errors.wrap(app.app_init(
 		[]app.Plugin {
 			windowing.Window_Plugin(),
 			graphics.Render_Plugin(),
 			fps.Fps_Plugin(.Uncapped),
 		},
-	)
+	))
 	defer {
 		app.app_destroy(&application)
 	}

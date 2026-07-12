@@ -48,8 +48,10 @@ register_assets_param_builder :: proc(w: ^ecs.World) {
 	})
 }
 
+import errors "../errors"
+
 Assets_Plugin :: proc() -> app.Plugin {
-	return app.Plugin{build = proc(plugin: app.Plugin, a: ^app.App) {
+	return app.Plugin{build = proc(plugin: app.Plugin, a: ^app.App) -> (errors.Error, bool) {
 			server: asset.AssetServer
 			asset.asset_server_init(&server)
 
@@ -62,5 +64,6 @@ Assets_Plugin :: proc() -> app.Plugin {
 			)
 
 			register_assets_param_builder(&a.world)
+			return {}, true
 		}, destroy = nil}
 }

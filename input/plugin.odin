@@ -3,6 +3,7 @@ package input
 import "base:runtime"
 import "../app"
 import "../ecs"
+import errors "../errors"
 
 Input_Plugin :: proc() -> app.Plugin {
 	return app.Plugin{
@@ -12,7 +13,7 @@ Input_Plugin :: proc() -> app.Plugin {
 	}
 }
 
-input_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
+input_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, ok: bool) {
 	state: Input_State
 	input_state_init(&state)
 	ecs.world_add_resource(&a.world, state, proc(s: ^Input_State, alloc: runtime.Allocator) {
@@ -46,6 +47,7 @@ input_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) {
 
 	// Add input update system in app.PreUpdate
 	app.app_add_system(a, app.PreUpdate, input_update_system)
+	return {}, true
 }
 
 runtime_type_info_base :: proc(info: ^runtime.Type_Info) -> ^runtime.Type_Info {

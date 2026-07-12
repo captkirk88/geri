@@ -3,7 +3,8 @@ package graphics
 import "base:runtime"
 import "core:fmt"
 import "core:io"
-import "vendor:wgpu"
+import errors "../errors"
+import wgpu "vendor:wgpu"
 
 // Compiles a WGSL shader code into a render pipeline matching the vertex layout (2D or 3D).
 // If uniform_size > 0, it creates a unified uniform buffer and binds it at @group(0) @binding(0).
@@ -15,16 +16,14 @@ create_render_shader_pass :: proc(
 	is_3d: bool = false,
 	format: wgpu.TextureFormat = .BGRA8Unorm,
 	uniform_size: u64 = 0,
-) -> (
-	pass: Shader_Pass,
-	ok: bool,
-) {
+) -> errors.Result(Shader_Pass, errors.Error) {
+	pass: Shader_Pass
 	pass.type = .Render
 	pass.uniform_size = uniform_size
 
 	// Read WGSL source from Reader
 	wgsl_code, read_ok := read_all(wgsl_source, context.temp_allocator)
-	if !read_ok do return pass, false
+	if !read_ok do return errors.Err(errors.Error){error = errors.new("Failed to read WGSL source")}
 
 	// Compile Shader Module
 	shader_source := wgpu.ShaderSourceWGSL {
@@ -35,7 +34,7 @@ create_render_shader_pass :: proc(
 		nextInChain = &shader_source.chain,
 	}
 	pass.shader_module = wgpu.DeviceCreateShaderModule(device, &shader_desc)
-	if pass.shader_module == nil do return pass, false
+	if pass.shader_module == nil do return errors.Err(errors.Error){error = errors.new("Failed to compile Shader Module")}
 
 	// Setup Bind Group and layout if uniforms are requested
 	pipeline_layout: wgpu.PipelineLayout
@@ -48,7 +47,7 @@ create_render_shader_pass :: proc(
 		pass.uniform_buf = wgpu.DeviceCreateBuffer(device, &buf_desc)
 		if pass.uniform_buf == nil {
 			wgpu.ShaderModuleRelease(pass.shader_module)
-			return pass, false
+			return errors.Err(errors.Error){error = errors.new("Failed to create Uniform Buffer")}
 		}
 
 		// Create Bind Group Layout
@@ -65,7 +64,7 @@ create_render_shader_pass :: proc(
 		if pass.bind_group_layout == nil {
 			wgpu.BufferRelease(pass.uniform_buf)
 			wgpu.ShaderModuleRelease(pass.shader_module)
-			return pass, false
+			return errors.Err(errors.Error){error = errors.new("Failed to create Bind Group Layout")}
 		}
 
 		// Create Bind Group
@@ -85,7 +84,7 @@ create_render_shader_pass :: proc(
 			wgpu.BindGroupLayoutRelease(pass.bind_group_layout)
 			wgpu.BufferRelease(pass.uniform_buf)
 			wgpu.ShaderModuleRelease(pass.shader_module)
-			return pass, false
+			return errors.Err(errors.Error){error = errors.new("Failed to create Bind Group")}
 		}
 
 		pipeline_layout_desc := wgpu.PipelineLayoutDescriptor {
@@ -99,7 +98,7 @@ create_render_shader_pass :: proc(
 	}
 	if pipeline_layout == nil {
 		destroy_shader_pass(&pass)
-		return pass, false
+		return errors.Err(errors.Error){error = errors.new("Failed to create Pipeline Layout")}
 	}
 	defer wgpu.PipelineLayoutRelease(pipeline_layout)
 
@@ -166,10 +165,10 @@ create_render_shader_pass :: proc(
 	pass.render_pipeline = wgpu.DeviceCreateRenderPipeline(device, &pipeline_desc)
 	if pass.render_pipeline == nil {
 		destroy_shader_pass(&pass)
-		return pass, false
+		return errors.Err(errors.Error){error = errors.new("Failed to create Render Pipeline")}
 	}
 
-	return pass, true
+	return errors.Ok(Shader_Pass){value = pass}
 }
 
 // Compiles a WGSL compute shader and sets up a default bind group layout:
@@ -181,16 +180,14 @@ create_compute_shader_pass :: proc(
 	wgsl_source: io.Reader,
 	entry_point: string = "cs_main",
 	uniform_size: u64 = 0,
-) -> (
-	pass: Shader_Pass,
-	ok: bool,
-) {
+) -> errors.Result(Shader_Pass, errors.Error) {
+	pass: Shader_Pass
 	pass.type = .Compute
 	pass.uniform_size = uniform_size
 
 	// Read WGSL source from Reader
 	wgsl_code, read_ok := read_all(wgsl_source, context.temp_allocator)
-	if !read_ok do return pass, false
+	if !read_ok do return errors.Err(errors.Error){error = errors.new("Failed to read WGSL source")}
 
 	// Compile Shader Module
 	shader_source := wgpu.ShaderSourceWGSL {
@@ -201,7 +198,7 @@ create_compute_shader_pass :: proc(
 		nextInChain = &shader_source.chain,
 	}
 	pass.shader_module = wgpu.DeviceCreateShaderModule(device, &shader_desc)
-	if pass.shader_module == nil do return pass, false
+	if pass.shader_module == nil do return errors.Err(errors.Error){error = errors.new("Failed to compile Shader Module")}
 
 	// Setup layout entries
 	entries: [3]wgpu.BindGroupLayoutEntry
@@ -228,7 +225,7 @@ create_compute_shader_pass :: proc(
 		pass.uniform_buf = wgpu.DeviceCreateBuffer(device, &buf_desc)
 		if pass.uniform_buf == nil {
 			wgpu.ShaderModuleRelease(pass.shader_module)
-			return pass, false
+			return errors.Err(errors.Error){error = errors.new("Failed to create Uniform Buffer")}
 		}
 
 		entries[2] = {
@@ -245,7 +242,7 @@ create_compute_shader_pass :: proc(
 	pass.bind_group_layout = wgpu.DeviceCreateBindGroupLayout(device, &layout_desc)
 	if pass.bind_group_layout == nil {
 		destroy_shader_pass(&pass)
-		return pass, false
+		return errors.Err(errors.Error){error = errors.new("Failed to create Bind Group Layout")}
 	}
 
 	pipeline_layout_desc := wgpu.PipelineLayoutDescriptor {
@@ -255,7 +252,7 @@ create_compute_shader_pass :: proc(
 	pipeline_layout := wgpu.DeviceCreatePipelineLayout(device, &pipeline_layout_desc)
 	if pipeline_layout == nil {
 		destroy_shader_pass(&pass)
-		return pass, false
+		return errors.Err(errors.Error){error = errors.new("Failed to create Pipeline Layout")}
 	}
 	defer wgpu.PipelineLayoutRelease(pipeline_layout)
 
@@ -266,10 +263,10 @@ create_compute_shader_pass :: proc(
 	pass.compute_pipeline = wgpu.DeviceCreateComputePipeline(device, &pipeline_desc)
 	if pass.compute_pipeline == nil {
 		destroy_shader_pass(&pass)
-		return pass, false
+		return errors.Err(errors.Error){error = errors.new("Failed to create Compute Pipeline")}
 	}
 
-	return pass, true
+	return errors.Ok(Shader_Pass){value = pass}
 }
 
 // Writes new uniform data from the CPU to the GPU uniform buffer.

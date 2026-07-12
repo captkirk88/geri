@@ -2,13 +2,14 @@ package app
 
 import ecs "../ecs"
 import sys "../ecs/systems"
+import errors "../errors"
 import "base:intrinsics"
 import "core:strings"
 import "core:sync"
 import "core:thread"
 
 Plugin :: struct {
-	build:   proc(plugin: Plugin, app: ^App),
+	build:   proc(plugin: Plugin, app: ^App) -> (errors.Error, bool),
 	destroy: proc(plugin: Plugin, app: ^App),
 	data:    rawptr,
 }
@@ -39,7 +40,7 @@ Render: Schedule_Label : "Render"
 PostRender: Schedule_Label : "PostRender"
 
 // Initializes a new App instance, setting up its ECS world, default schedules, default thread count (4), and running any provided plugins.
-app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> App {
+app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> errors.Result(App, errors.Error) {
 	app: App
 	app.world = ecs.new_world(allocator)
 	sys.world_init_default_params(&app.world)
@@ -65,7 +66,11 @@ app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> App
 
 	for p in plugins {
 		if p.build != nil {
-			p->build(&app)
+			err, ok := p->build(&app)
+			if !ok {
+				app_destroy(&app)
+				return errors.Err(errors.Error){error = err}
+			}
 		}
 	}
 
@@ -75,7 +80,7 @@ app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> App
 		}
 	}
 
-	return app
+	return errors.Ok(App){value = app}
 }
 
 // Destroys the App instance, freeing all schedules and the ECS world.
@@ -98,10 +103,11 @@ app_destroy :: proc(app: ^App) {
 	ecs.world_destroy(&app.world)
 }
 
-app_add_plugin :: proc(app: ^App, plugin: Plugin) {
+app_add_plugin :: proc(app: ^App, plugin: Plugin) -> (errors.Error, bool) {
 	if plugin.build != nil {
-		plugin.build(plugin, app)
+		return plugin.build(plugin, app)
 	}
+	return {}, true
 }
 
 // Adds a resource to the application's ECS world.

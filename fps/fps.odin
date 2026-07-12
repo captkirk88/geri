@@ -3,6 +3,7 @@ package fps
 import "../app"
 import ecs "../ecs"
 import "../ecs/params"
+import errors "../errors"
 import graphics "../graphics"
 import "base:runtime"
 import "core:fmt"
@@ -150,11 +151,11 @@ fps_cleanup_system :: proc(
 
 // Internal helper: creates the dedicated HUD batch and registers it as a resource.
 @(private)
-fps_plugin_build_impl :: proc(settings: Fps_Settings, plugin: app.Plugin, a: ^app.App) {
+fps_plugin_build_impl :: proc(settings: Fps_Settings, plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, ok: bool) {
 	// Create the dedicated HUD batch. Render_Plugin must have already run.
 	render_ctx := ecs.world_get_resource(&a.world, graphics.Render_Context)
 	if render_ctx == nil || render_ctx.device == nil {
-		return // Render_Plugin not initialized — skip silently
+		return errors.new("Render_Plugin not initialized — Render_Context missing"), false
 	}
 	hud_batch := Fps_Batch {
 		batch = graphics.init_batch2d(render_ctx.device, render_ctx.config.format),
@@ -196,15 +197,16 @@ fps_plugin_build_impl :: proc(settings: Fps_Settings, plugin: app.Plugin, a: ^ap
 		//after = []app.System_Dependency{rawptr(graphics.frame_present_system)},
 		before = []app.System_Dependency{rawptr(graphics.render_cleanup_system)},
 	)
+	return {}, true
 }
 
-fps_plugin_build :: proc(settings: Fps_Settings) -> proc(plugin: app.Plugin, a: ^app.App) {
-	build_capped := proc(plugin: app.Plugin, a: ^app.App) {
-		fps_plugin_build_impl(.Capped, plugin, a)
+fps_plugin_build :: proc(settings: Fps_Settings) -> proc(plugin: app.Plugin, a: ^app.App) -> (errors.Error, bool) {
+	build_capped := proc(plugin: app.Plugin, a: ^app.App) -> (errors.Error, bool) {
+		return fps_plugin_build_impl(.Capped, plugin, a)
 	}
 
-	build_uncapped := proc(plugin: app.Plugin, a: ^app.App) {
-		fps_plugin_build_impl(.Uncapped, plugin, a)
+	build_uncapped := proc(plugin: app.Plugin, a: ^app.App) -> (errors.Error, bool) {
+		return fps_plugin_build_impl(.Uncapped, plugin, a)
 	}
 
 	switch settings {

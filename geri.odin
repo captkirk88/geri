@@ -15,6 +15,7 @@ import "time"
 import "transform"
 import "ui"
 import "windowing"
+import "errors"
 
 import "base:runtime"
 import "core:io"
@@ -32,17 +33,14 @@ text_loader_proc :: proc(
 	reader: io.Reader,
 	settings: rawptr,
 	allocator: runtime.Allocator,
-) -> (
-	rawptr,
-	asset.AssetError,
-) {
+) -> errors.Result(rawptr, errors.Error) {
 	buf: [1024]u8
 	n, err := io.read(reader, buf[:])
-	if err != nil && err != .EOF do return nil, .Loader_Error
+	if err != nil && err != .EOF do return errors.Err(errors.Error){error = errors.from_payload(asset.AssetError.Loader_Error)}
 
 	asset_val := new(TextAsset, allocator)
 	asset_val.content = strings.clone(string(buf[:n]), allocator)
-	return asset_val, .None
+	return errors.Ok(rawptr){value = asset_val}
 }
 
 @(test)
@@ -81,8 +79,8 @@ test_assets_param :: proc(t: ^testing.T) {
 	defer os.remove(file_path)
 
 	// Load the asset
-	_, load_err := asset.asset_server_load(&server, "mods://hello.txt", TextAsset)
-	testing.expect(t, load_err == .None)
+	res := asset.asset_server_load(&server, "mods://hello.txt", TextAsset)
+	testing.expect(t, errors.is_ok(res))
 
 	// Register AssetServer as a resource in the world
 	ecs.world_add_resource(&w, server)
