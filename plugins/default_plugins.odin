@@ -1,18 +1,15 @@
 package plugins
 
 import "../app"
-import "../windowing"
 import "../graphics"
+import "../windowing"
 
 Default_Plugins :: proc() -> app.Plugin {
-	return app.Plugin{
-		build = proc(plugin: app.Plugin, a: ^app.App) {
-			windowing.Window_Plugin().build(plugin, a)
-			graphics.Render_Plugin().build(plugin, a)
-		},
-		destroy = proc(plugin: app.Plugin, a: ^app.App) {
+	return app.Plugin{build = proc(plugin: app.Plugin, a: ^app.App) {
+			app.app_add_plugin(a, windowing.Window_Plugin())
+			app.app_add_plugin(a, graphics.Render_Plugin())
+			app.app_add_plugin(a, Assets_Plugin())
+		}, destroy = proc(plugin: app.Plugin, a: ^app.App) {
 			graphics.Render_Plugin().destroy(plugin, a)
-			windowing.Window_Plugin().destroy(plugin, a)
-		},
-	}
+		}}
 }

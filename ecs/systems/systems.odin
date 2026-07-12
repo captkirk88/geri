@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:hash"
 import "core:mem"
 import "core:slice"
+import "core:sync"
 
 import "core:testing"
 
@@ -497,12 +498,17 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			state.include = make([dynamic]typeid, w.allocator)
 			state.exclude = make([dynamic]typeid, w.allocator)
 			state.any_ = make([dynamic]typeid, w.allocator)
+			state.optional = make([dynamic]typeid, w.allocator)
 
 			phantom_ti := s.types[2]
 			phantom_ptr_info := phantom_ti.variant.(runtime.Type_Info_Pointer)
 			t_actual := phantom_ptr_info.elem
 
 			parse_term :: proc(ti: ^runtime.Type_Info, state: ^ecs.Query_State) {
+				if inner, ok := ecs.is_maybe_typeid(ti.id); ok {
+					append(&state.optional, inner)
+					return
+				}
 				named, ok := ti.variant.(runtime.Type_Info_Named)
 				if ok {
 					if len(named.name) >= 5 && named.name[:5] == "With(" {
@@ -555,10 +561,12 @@ world_init_default_params :: proc(w: ^ecs.World) {
 			if len(state.include) > 1 do slice.sort_by(state.include[:], typeid_cmp)
 			if len(state.exclude) > 1 do slice.sort_by(state.exclude[:], typeid_cmp)
 			if len(state.any_) > 1 do slice.sort_by(state.any_[:], typeid_cmp)
+			if len(state.optional) > 1 do slice.sort_by(state.optional[:], typeid_cmp)
 
 			state.hash = hash.fnv64a(slice.to_bytes(state.include[:]))
 			if len(state.exclude) > 0 do state.hash = hash.fnv64a(slice.to_bytes(state.exclude[:]), state.hash)
 			if len(state.any_) > 0 do state.hash = hash.fnv64a(slice.to_bytes(state.any_[:]), state.hash)
+			if len(state.optional) > 0 do state.hash = hash.fnv64a(slice.to_bytes(state.optional[:]), state.hash)
 		},
 		after_run = proc(w: ^ecs.World, sys: rawptr, info: ^runtime.Type_Info, ptr: rawptr) {
 			w.iteration_depth -= 1
@@ -571,6 +579,7 @@ world_init_default_params :: proc(w: ^ecs.World) {
 				delete(state.include)
 				delete(state.exclude)
 				delete(state.any_)
+				delete(state.optional)
 				free(state, state.world.allocator)
 				state_ptr^ = nil
 			}
@@ -1319,4 +1328,48 @@ test_new_params_added_removed_single :: proc(t: ^testing.T) {
 	testing.expect_value(t, conf.added_count, 1) // e2 was added
 	testing.expect_value(t, conf.removed_count, 1) // e1 was removed
 	testing.expect_value(t, conf.single_val, 100)
+}
+
+@(test)
+test_system_query_maybe :: proc(t: ^testing.T) {
+	w := ecs.new_world()
+	defer ecs.world_destroy(&w)
+
+	world_init_default_params(&w)
+
+	// Spawn entity with both i32 and f32
+	e1 := ecs.world_spawn(&w)
+	ecs.world_add_component(&w, e1, i32(10))
+	ecs.world_add_component(&w, e1, f32(1.5))
+
+	// Spawn entity with only i32
+	e2 := ecs.world_spawn(&w)
+	ecs.world_add_component(&w, e2, i32(20))
+
+	Config :: struct {
+		entity_count: int,
+	}
+	ecs.world_add_resource(&w, Config{})
+
+	sys_proc :: proc(
+		query: params.Query(struct {
+			i: i32,
+			f: Maybe(f32),
+		}),
+		config: params.Res(Config),
+	) {
+		count := 0
+		for arch in params.query(query) {
+			count += arch.len
+		}
+		config.ptr.entity_count = count
+	}
+
+	sys := new_system(sys_proc)
+	defer destroy_system(&w, sys)
+
+	run_system(&w, sys)
+
+	conf := ecs.world_get_resource(&w, Config)
+	testing.expect_value(t, conf.entity_count, 2)
 }

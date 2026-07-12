@@ -566,8 +566,6 @@ main :: proc() {
 		before = ui.UI_INTERACTION_SYSTEMS_GROUP,
 	)
 
-	app.app_run_schedule(&application, app.Startup)
-
 	start_time := time.tick_now()
 	take_screenshot := false
 	screenshot_taken := false

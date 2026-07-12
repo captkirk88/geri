@@ -81,6 +81,12 @@ quiet = true
 silent = true
 run = ["rm -rf build/"]
 
+[tasks.docs]
+description = "Generate documentation for all packages containing .odin files"
+run = "bash scripts/gen_docs.sh"
+run_windows = "powershell -File scripts/gen_docs.ps1"
+
+
 [tasks.make_build]
 quiet = true
 silent = true

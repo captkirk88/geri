@@ -102,7 +102,16 @@ query :: proc(q: Query($T)) -> ecs.QueryIter {
 		q.state.include[:],
 		q.state.exclude[:],
 		q.state.any_[:],
+		q.state.optional[:],
 	)
 	q.state.epoch = q.state.world.query_cache_epoch
 	return q.state.cached_res
 }
+
+
+import asset "../../asset"
+
+Assets :: struct($T: typeid) {
+	assets: []asset.Asset_Entry(T),
+}
+

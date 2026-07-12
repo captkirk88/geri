@@ -21,6 +21,7 @@ App :: struct {
 	thread_count:    int,
 	thread_pool:     ^thread.Pool,
 	has_thread_pool: bool,
+	has_started:     bool,
 }
 
 Schedule_Label :: distinct string
@@ -95,6 +96,12 @@ app_destroy :: proc(app: ^App) {
 	delete(app.schedules)
 
 	ecs.world_destroy(&app.world)
+}
+
+app_add_plugin :: proc(app: ^App, plugin: Plugin) {
+	if plugin.build != nil {
+		plugin.build(plugin, app)
+	}
 }
 
 // Adds a resource to the application's ECS world.
@@ -194,6 +201,10 @@ app_run_schedule :: proc(app: ^App, schedule_label: Schedule_Label) {
 
 // Runs a single frame update iteration, executing the update schedules (First, PreUpdate, Update, PostUpdate, Last, Render).
 app_update :: proc(app: ^App) {
+	if app.has_started == false {
+		app.has_started = true
+		app_run_schedule(app, Startup)
+	}
 	app_run_schedule(app, First)
 	app_run_schedule(app, PreUpdate)
 	app_run_schedule(app, Update)

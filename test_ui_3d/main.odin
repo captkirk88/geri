@@ -621,7 +621,6 @@ main :: proc() {
 		sphere_ui_render_system,
 		after = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
-	app.app_run_schedule(&application, app.Startup)
 
 	start_time := time.tick_now()
 	screenshot_taken := false

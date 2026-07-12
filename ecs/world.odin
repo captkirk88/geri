@@ -975,21 +975,38 @@ _query_internal :: proc(w: ^World, terms: []any) -> QueryIter {
 	if len(terms) == 0 do return nil
 
 	// 1. Resolve terms to typeids
-	tids := make([]typeid, len(terms), context.temp_allocator)
-	for t_val, idx in terms {
-		if val, ok := t_val.(typeid); ok do tids[idx] = val
-		else if val, ok := t_val.(Term); ok do tids[idx] = world_resolve_term(w, val)
+	tids := make([dynamic]typeid, context.temp_allocator)
+	opt_tids := make([dynamic]typeid, context.temp_allocator)
+	for t_val in terms {
+		tid: typeid
+		if val, ok := t_val.(typeid); ok do tid = val
+		else if val, ok := t_val.(Term); ok do tid = world_resolve_term(w, val)
+		else do continue
+
+		if inner, ok := is_maybe_typeid(tid); ok {
+			append(&opt_tids, inner)
+		} else {
+			append(&tids, tid)
+		}
 	}
 
 	// 2. Sort the typeids to make cache keys order-independent
 	if len(tids) > 1 {
-		slice.sort_by(tids, proc(i, j: typeid) -> bool {
+		slice.sort_by(tids[:], proc(i, j: typeid) -> bool {
+			return transmute(uintptr)i < transmute(uintptr)j
+		})
+	}
+	if len(opt_tids) > 1 {
+		slice.sort_by(opt_tids[:], proc(i, j: typeid) -> bool {
 			return transmute(uintptr)i < transmute(uintptr)j
 		})
 	}
 
 	// 3. Hash the typeids
-	h := hash.fnv64a(slice.to_bytes(tids))
+	h := hash.fnv64a(slice.to_bytes(tids[:]))
+	if len(opt_tids) > 0 {
+		h = hash.fnv64a(slice.to_bytes(opt_tids[:]), h)
+	}
 
 	// 4. Check cache
 	sync.mutex_lock(&w.cache_mutex)
@@ -1030,9 +1047,9 @@ _query_internal :: proc(w: ^World, terms: []any) -> QueryIter {
 query_by_lists_and_hash :: proc(
 	w: ^World,
 	h: u64,
-	include, exclude, any_list: []typeid,
+	include, exclude, any_list, optional_list: []typeid,
 ) -> QueryIter {
-	if len(include) == 0 && len(any_list) == 0 do return nil
+	if len(include) == 0 && len(any_list) == 0 && len(optional_list) == 0 do return nil
 
 	// Check cache
 	sync.mutex_lock(&w.cache_mutex)
@@ -1048,11 +1065,13 @@ query_by_lists_and_hash :: proc(
 	q.include = make([dynamic]typeid, w.allocator)
 	q.exclude = make([dynamic]typeid, w.allocator)
 	q.any_ = make([dynamic]typeid, w.allocator)
+	q.optional = make([dynamic]typeid, w.allocator)
 	defer query_destroy(&q)
 
 	for tid in include do append(&q.include, tid)
 	for tid in exclude do append(&q.exclude, tid)
 	for tid in any_list do append(&q.any_, tid)
+	for tid in optional_list do append(&q.optional, tid)
 
 	results := make([dynamic]^Archetype, context.temp_allocator)
 
@@ -1078,13 +1097,14 @@ query_by_lists_and_hash :: proc(
 	return iter
 }
 
-query_by_lists :: proc(w: ^World, include, exclude, any_list: []typeid) -> QueryIter {
-	if len(include) == 0 && len(any_list) == 0 do return nil
+query_by_lists :: proc(w: ^World, include, exclude, any_list, optional_list: []typeid) -> QueryIter {
+	if len(include) == 0 && len(any_list) == 0 && len(optional_list) == 0 do return nil
 
 	// Sort lists for consistent hashing
 	inc := slice.clone(include, context.temp_allocator)
 	exc := slice.clone(exclude, context.temp_allocator)
 	anys := slice.clone(any_list, context.temp_allocator)
+	opts := slice.clone(optional_list, context.temp_allocator)
 
 	typeid_cmp :: proc(i, j: typeid) -> bool {
 		return transmute(uintptr)i < transmute(uintptr)j
@@ -1093,13 +1113,15 @@ query_by_lists :: proc(w: ^World, include, exclude, any_list: []typeid) -> Query
 	if len(inc) > 1 do slice.sort_by(inc, typeid_cmp)
 	if len(exc) > 1 do slice.sort_by(exc, typeid_cmp)
 	if len(anys) > 1 do slice.sort_by(anys, typeid_cmp)
+	if len(opts) > 1 do slice.sort_by(opts, typeid_cmp)
 
 	// Build key
 	h := hash.fnv64a(slice.to_bytes(inc))
 	if len(exc) > 0 do h = hash.fnv64a(slice.to_bytes(exc), h)
 	if len(anys) > 0 do h = hash.fnv64a(slice.to_bytes(anys), h)
+	if len(opts) > 0 do h = hash.fnv64a(slice.to_bytes(opts), h)
 
-	return query_by_lists_and_hash(w, h, inc, exc, anys)
+	return query_by_lists_and_hash(w, h, inc, exc, anys, opts)
 }
 
 @(private)

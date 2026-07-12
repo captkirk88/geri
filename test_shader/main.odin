@@ -415,9 +415,6 @@ main :: proc() {
 	)
 	app.app_add_system(&application, app.Last, cleanup_shader_system)
 
-	app.app_run_schedule(&application, app.Startup)
-
-
 	start_time := time.tick_now()
 	screenshot_taken := false
 	screenshot_time := duration / 4

@@ -21,3 +21,4 @@ build/
 # images
 test_*.png
 !test_ui_screenshot.png
+*.aseprite
