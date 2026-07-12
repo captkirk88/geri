@@ -66,7 +66,7 @@ test_assets_param :: proc(t: ^testing.T) {
 	}
 	asset.asset_server_register(&server, &mgr)
 
-	asset.asset_schema_registry_register(&server.registry, "mods", "test_base_sys")
+	asset.asset_schemas_register(&server.registry, "mods", "test_base_sys")
 
 	os.make_directory("test_base_sys")
 	defer os.remove("test_base_sys")

@@ -1,5 +1,6 @@
 package asset
 
+import errors "../errors"
 import "base:runtime"
 import "core:hash"
 import "core:io"
@@ -7,7 +8,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
-import errors "../errors"
 
 AssetPath :: string
 
@@ -37,11 +37,12 @@ AssetError :: enum {
 }
 
 AssetLoader :: struct {
-	load: proc(
+	load:    proc(
 		reader: io.Reader,
 		settings: rawptr,
 		allocator: runtime.Allocator,
 	) -> errors.Result(rawptr, errors.Error),
+	destroy: proc(asset: rawptr, allocator: runtime.Allocator),
 }
 
 IAssetManager :: struct {
@@ -78,7 +79,21 @@ asset_manager_init :: proc(
 }
 
 asset_manager_destroy :: proc(mgr: ^AssetManager($T)) {
+	if mgr.assets == nil do return
+	if mgr.loader.destroy != nil {
+		for _, &val in mgr.assets {
+			ti := type_info_of(T)
+			_, is_ptr := ti.variant.(runtime.Type_Info_Pointer)
+			if is_ptr {
+				ptr := (^rawptr)(&val)^
+				mgr.loader.destroy(ptr, mgr.allocator)
+			} else {
+				mgr.loader.destroy(&val, mgr.allocator)
+			}
+		}
+	}
 	delete(mgr.assets)
+	mgr.assets = nil
 }
 
 asset_manager_load :: proc(
@@ -134,11 +149,7 @@ asset_schema_registry_destroy :: proc(registry: ^AssetSchemaRegistry) {
 	delete(registry.paths)
 }
 
-asset_schema_registry_register :: proc(
-	registry: ^AssetSchemaRegistry,
-	scheme: string,
-	base_path: string,
-) {
+asset_schemas_register :: proc(registry: ^AssetSchemaRegistry, scheme: string, base_path: string) {
 	sync.mutex_lock(&registry.mutex)
 	defer sync.mutex_unlock(&registry.mutex)
 
@@ -153,7 +164,7 @@ asset_schema_registry_register :: proc(
 	registry.paths[s] = b
 }
 
-asset_schema_registry_resolve :: proc(
+asset_schemas_resolve :: proc(
 	registry: ^AssetSchemaRegistry,
 	path: AssetPath,
 ) -> (
@@ -218,6 +229,27 @@ asset_server_destroy :: proc(server: ^AssetServer) {
 	delete(server.extension_types)
 }
 
+asset_manager_populate_slice :: proc($T: typeid) -> proc(rawptr, rawptr, runtime.Allocator) {
+	return proc(manager_ptr: rawptr, target_slice_ptr: rawptr, allocator: runtime.Allocator) {
+		mgr := (^AssetManager(T))(manager_ptr)
+		sync.mutex_lock(&mgr.mutex)
+		defer sync.mutex_unlock(&mgr.mutex)
+
+		slice := make([]Asset_Entry(T), len(mgr.assets), allocator)
+		i := 0
+		for id, asset in mgr.assets {
+			slice[i] = Asset_Entry(T) {
+				id = AssetId(T){id = id},
+				asset = asset,
+			}
+			i += 1
+		}
+
+		raw_slice := transmute(runtime.Raw_Slice)slice
+		((^runtime.Raw_Slice)(target_slice_ptr))^ = raw_slice
+	}
+}
+
 asset_server_register :: proc(server: ^AssetServer, manager: ^AssetManager($T)) {
 	sync.mutex_lock(&server.mutex)
 	defer sync.mutex_unlock(&server.mutex)
@@ -238,28 +270,7 @@ asset_server_register :: proc(server: ^AssetServer, manager: ^AssetManager($T)) 
 			mgr := (^AssetManager(T))(manager_ptr)
 			asset_manager_destroy(mgr)
 		},
-		populate_assets_slice = proc(
-			manager_ptr: rawptr,
-			target_slice_ptr: rawptr,
-			allocator: runtime.Allocator,
-		) {
-			mgr := (^AssetManager(T))(manager_ptr)
-			sync.mutex_lock(&mgr.mutex)
-			defer sync.mutex_unlock(&mgr.mutex)
-
-			slice := make([]Asset_Entry(T), len(mgr.assets), allocator)
-			i := 0
-			for id, asset in mgr.assets {
-				slice[i] = Asset_Entry(T) {
-					id = AssetId(T){id = id},
-					asset = asset,
-				}
-				i += 1
-			}
-
-			raw_slice := transmute(runtime.Raw_Slice)slice
-			((^runtime.Raw_Slice)(target_slice_ptr))^ = raw_slice
-		},
+		populate_assets_slice = asset_manager_populate_slice(T),
 	}
 }
 
@@ -313,7 +324,7 @@ asset_server_load :: proc(
 	$T: typeid,
 	settings: rawptr = nil,
 ) -> errors.Result(^T, errors.Error) {
-	resolved, id, ok := asset_schema_registry_resolve(&server.registry, path)
+	resolved, id, ok := asset_schemas_resolve(&server.registry, path)
 	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Path_Not_Resolved)}
 
 	// Try quick lookup
@@ -344,7 +355,7 @@ asset_server_load_untyped :: proc(
 	path: AssetPath,
 	settings: rawptr = nil,
 ) -> errors.Result(rawptr, errors.Error) {
-	resolved, id, ok := asset_schema_registry_resolve(&server.registry, path)
+	resolved, id, ok := asset_schemas_resolve(&server.registry, path)
 	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Path_Not_Resolved)}
 
 	ext := filepath.ext(resolved)

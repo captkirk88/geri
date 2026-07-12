@@ -4,6 +4,8 @@ import g ".."
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
+import "vendor:cgltf"
+import asset "../../asset"
 
 // project_point applies the view-projection matrix to a 3D point.
 project_point :: proc(vp: linalg.Matrix4f32, p: [3]f32) -> [3]f32 {
@@ -475,7 +477,90 @@ test_draw_cylinder :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(batch.vertices), 18)
 	// Bottom cap: 8 * 3 = 24
 	// Top cap: 8 * 3 = 24
-	// Side walls: 8 * 6 = 48
 	// Total: 96 indices
 	testing.expect_value(t, len(batch.indices), 96)
 }
+
+draw_model :: proc{
+	draw_gltf_model,
+	draw_obj_model,
+}
+
+draw_gltf_model :: proc(
+	batch: ^g.Batch3D,
+	model: ^asset.Gltf_Data,
+	color: [4]f32,
+	vp := linalg.MATRIX4F32_IDENTITY,
+) {
+	if model == nil || model.raw_data == nil do return
+	data := model.raw_data
+
+	for &mesh in data.meshes {
+		for &prim in mesh.primitives {
+			// Find position attribute
+			pos_attr: ^cgltf.attribute = nil
+			for &attr in prim.attributes {
+				if attr.type == .position {
+					pos_attr = &attr
+					break
+				}
+			}
+			if pos_attr == nil do continue
+
+			base_idx := u32(len(batch.vertices))
+			accessor := pos_attr.data
+			count := accessor.count
+
+			// Unpack positions using cgltf
+			pos_buffer := make([]f32, count * 3, context.temp_allocator)
+			cgltf.accessor_unpack_floats(accessor, raw_data(pos_buffer), uint(len(pos_buffer)))
+
+			for i in 0..<count {
+				raw_pos := [3]f32{
+					pos_buffer[i * 3 + 0],
+					pos_buffer[i * 3 + 1],
+					pos_buffer[i * 3 + 2],
+				}
+				append(&batch.vertices, g.Vertex3D{
+					position = project_point(vp, raw_pos),
+					color = color,
+				})
+			}
+
+			if prim.indices != nil {
+				idx_accessor := prim.indices
+				idx_count := idx_accessor.count
+				for i in 0..<idx_count {
+					idx := u32(cgltf.accessor_read_index(idx_accessor, uint(i)))
+					append(&batch.indices, base_idx + idx)
+				}
+			} else {
+				for i in 0..<count {
+					append(&batch.indices, base_idx + u32(i))
+				}
+			}
+		}
+	}
+}
+
+draw_obj_model :: proc(
+	batch: ^g.Batch3D,
+	model: ^asset.Obj_Mesh,
+	color: [4]f32,
+	vp := linalg.MATRIX4F32_IDENTITY,
+) {
+	if model == nil do return
+	base_idx := u32(len(batch.vertices))
+
+	for v in model.vertices {
+		append(&batch.vertices, g.Vertex3D{
+			position = project_point(vp, [3]f32{v[0], v[1], v[2]}),
+			color = color,
+		})
+	}
+
+	for idx in model.indices {
+		append(&batch.indices, base_idx + idx)
+	}
+}
+
