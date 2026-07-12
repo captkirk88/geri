@@ -1,7 +1,7 @@
 package events
 
-import "core:testing"
 import "core:mem"
+import "core:testing"
 
 My_Event :: struct {
 	val: int,
@@ -38,7 +38,9 @@ test_event_observability :: proc(t: ^testing.T) {
 	id := register(&m, My_Event, my_event_callback, &state)
 	testing.expect(t, id != 0, "Observer ID should be non-zero")
 
-	ev := My_Event{val = 42}
+	ev := My_Event {
+		val = 42,
+	}
 	trigger(&m, nil, My_Event, 100, &ev)
 
 	testing.expect_value(t, state.count, 1)
@@ -58,7 +60,9 @@ test_event_dependability_unregister :: proc(t: ^testing.T) {
 	id1 := register(&m, My_Event, my_event_callback, &state1)
 	id2 := register(&m, My_Event, my_event_callback, &state2)
 
-	ev := My_Event{val = 10}
+	ev := My_Event {
+		val = 10,
+	}
 	trigger(&m, nil, My_Event, 101, &ev)
 
 	testing.expect_value(t, state1.count, 1)
@@ -80,8 +84,12 @@ test_event_history :: proc(t: ^testing.T) {
 	init(&m, context.allocator)
 	defer destroy(&m)
 
-	ev1 := My_Event{val = 1}
-	ev2 := My_Event{val = 2}
+	ev1 := My_Event {
+		val = 1,
+	}
+	ev2 := My_Event {
+		val = 2,
+	}
 
 	trigger(&m, nil, My_Event, 104, &ev1)
 	trigger(&m, nil, My_Event, 105, &ev2)

@@ -165,7 +165,7 @@ setup_system :: proc(
 
 	// 1. Compile 3D Render Shader Pass
 	render_r: strings.Reader
-	render_pass, render_ok := graphics.create_render_shader_pass(
+	render_res := graphics.create_render_shader_pass(
 		ctx.device,
 		strings.to_reader(&render_r, RENDER_SHADER),
 		"vs_main",
@@ -174,24 +174,26 @@ setup_system :: proc(
 		ctx.config.format,
 		16,
 	)
-	if !render_ok {
+	if errors.is_err(render_res) {
 		log.error("Failed to compile 3D Render Shader Pass.")
 		return
 	}
+	render_pass := errors.unwrap(render_res)
 
 	// 2. Compile Compute Shader Pass
 	compute_r: strings.Reader
-	compute_pass, compute_ok := graphics.create_compute_shader_pass(
+	compute_res := graphics.create_compute_shader_pass(
 		ctx.device,
 		strings.to_reader(&compute_r, COMPUTE_SHADER),
 		"cs_main",
 		16,
 	)
-	if !compute_ok {
+	if errors.is_err(compute_res) {
 		log.error("Failed to compile Compute Shader Pass.")
 		graphics.destroy_shader_pass(&render_pass)
 		return
 	}
+	compute_pass := errors.unwrap(compute_res)
 
 	log.info("Shader passes compiled successfully!")
 
@@ -199,7 +201,7 @@ setup_system :: proc(
 	blob_batch := graphics.init_batch3d(ctx.device, ctx.config.format)
 	shader_comp := Blob {
 		compute_pass = compute_pass,
-		render_pass  = errors.unwrap(render_pass),
+		render_pass  = render_pass,
 		batch        = blob_batch,
 		time         = 0.0,
 	}
@@ -394,7 +396,7 @@ main :: proc() {
 		gmem.tracker_destroy(&global_tracker)
 	}
 
-	application := errors.unwrap(
+	application: app.App = errors.unwrap(
 		app.app_init(
 			[]app.Plugin {
 				windowing.Window_Plugin(),

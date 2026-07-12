@@ -1351,13 +1351,10 @@ test_system_query_maybe :: proc(t: ^testing.T) {
 	}
 	ecs.world_add_resource(&w, Config{})
 
-	sys_proc :: proc(
-		query: params.Query(struct {
-			i: i32,
-			f: Maybe(f32),
-		}),
-		config: params.Res(Config),
-	) {
+	sys_proc :: proc(query: params.Query(struct {
+				i: i32,
+				f: Maybe(f32),
+			}), config: params.Res(Config)) {
 		count := 0
 		for arch in params.query(query) {
 			count += arch.len

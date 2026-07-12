@@ -13,6 +13,8 @@ import "core:math/linalg"
 import "core:testing"
 import "vendor:wgpu"
 
+import errors "../../errors"
+
 // Gizmo3D is a component that visualizes the local orientation axes of an entity in 3D.
 Gizmo3D :: struct {
 	size:      f32,
@@ -21,13 +23,14 @@ Gizmo3D :: struct {
 
 // Gizmo_Plugin_3D returns a plugin that registers the 3D gizmo rendering system.
 Gizmo_Plugin_3D :: proc() -> app.Plugin {
-	return app.Plugin{build = proc(plugin: app.Plugin, a: ^app.App) {
+	return app.Plugin{build = proc(plugin: app.Plugin, a: ^app.App) -> (errors.Error, bool) {
 			app.app_add_system(
 				a,
 				app.Render,
 				draw_gizmo_3d_system,
 				before = []app.System_Dependency{rawptr(g.main_render_system)},
 			)
+			return {}, true
 		}}
 }
 

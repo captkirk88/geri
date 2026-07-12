@@ -87,4 +87,3 @@ test_render_target_nil_safety :: proc(t: ^testing.T) {
 	// Safe to destroy even if nil/zeroed
 	render_target_destroy(&target2)
 }
-

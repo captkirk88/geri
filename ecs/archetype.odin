@@ -1,5 +1,6 @@
 package ecs
 
+import reflect "../reflect"
 import "base:runtime"
 import "core:mem"
 import "core:slice"
@@ -7,7 +8,6 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import reflect "../reflect"
 
 
 Archetype_Edge :: struct {

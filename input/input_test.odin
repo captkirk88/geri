@@ -1,10 +1,10 @@
 package input
 
-import "core:testing"
-import "base:runtime"
-import "vendor:sdl3"
 import "../ecs"
 import params "../ecs/params"
+import "base:runtime"
+import "core:testing"
+import "vendor:sdl3"
 
 @(test)
 test_input_state_injection :: proc(t: ^testing.T) {
@@ -78,8 +78,12 @@ test_gamepad_api_correctness :: proc(t: ^testing.T) {
 	input_state_init(&state)
 	defer input_state_destroy(&state)
 
-	btn_inp := Input(GamepadButton){ state = &state }
-	axis_inp := Input(GamepadAxis){ state = &state }
+	btn_inp := Input(GamepadButton) {
+		state = &state,
+	}
+	axis_inp := Input(GamepadAxis) {
+		state = &state,
+	}
 
 	// Test default values
 	testing.expect_value(t, is_down(btn_inp, GamepadButton.South), false)
@@ -112,7 +116,9 @@ test_gamepad_deadzones :: proc(t: ^testing.T) {
 	input_state_init(&state)
 	defer input_state_destroy(&state)
 
-	axis_inp := Input(GamepadAxis){ state = &state }
+	axis_inp := Input(GamepadAxis) {
+		state = &state,
+	}
 
 	// Mock SDL3 events
 	ev1: sdl3.Event
@@ -135,10 +141,10 @@ test_gamepad_deadzones :: proc(t: ^testing.T) {
 	ev4.gaxis.axis = u8(sdl3.GamepadAxis.RIGHT_TRIGGER)
 	ev4.gaxis.value = 3276 // ~0.1 (above trigger deadzone of 0.05)
 
-	reader := params.EventReader(sdl3.Event){
+	reader := params.EventReader(sdl3.Event) {
 		events = []sdl3.Event{ev1, ev2, ev3, ev4},
 	}
-	state_res := params.Res(Input_State){
+	state_res := params.Res(Input_State) {
 		ptr = &state,
 	}
 

@@ -1097,7 +1097,10 @@ query_by_lists_and_hash :: proc(
 	return iter
 }
 
-query_by_lists :: proc(w: ^World, include, exclude, any_list, optional_list: []typeid) -> QueryIter {
+query_by_lists :: proc(
+	w: ^World,
+	include, exclude, any_list, optional_list: []typeid,
+) -> QueryIter {
 	if len(include) == 0 && len(any_list) == 0 && len(optional_list) == 0 do return nil
 
 	// Sort lists for consistent hashing

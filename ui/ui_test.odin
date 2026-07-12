@@ -1,8 +1,8 @@
 package ui
 
-import "core:testing"
-import "base:runtime"
 import "../ecs"
+import "base:runtime"
+import "core:testing"
 
 @(test)
 test_ui_cascading_despawn :: proc(t: ^testing.T) {
@@ -15,7 +15,7 @@ test_ui_cascading_despawn :: proc(t: ^testing.T) {
 	ecs.world_add_resource(&w, state, proc(s: ^UI_State, alloc: runtime.Allocator) {
 		ui_state_destroy(s)
 	})
-	
+
 	ui_observer_init(&w)
 
 	parent := ecs.world_spawn(&w)
@@ -47,15 +47,19 @@ test_ui_canvas_components_lifecycle :: proc(t: ^testing.T) {
 	ecs.world_add_resource(&w, state, proc(s: ^UI_State, alloc: runtime.Allocator) {
 		ui_state_destroy(s)
 	})
-	
+
 	ui_observer_init(&w)
 
 	canvas_entity := ecs.world_spawn(&w)
-	ecs.world_add_component(&w, canvas_entity, UI_Canvas{
-		render_mode = .World_Space,
-		reference_size = {800, 600},
-		world_size = {2.0, 1.5},
-	})
+	ecs.world_add_component(
+		&w,
+		canvas_entity,
+		UI_Canvas {
+			render_mode = .World_Space,
+			reference_size = {800, 600},
+			world_size = {2.0, 1.5},
+		},
+	)
 
 	canvas := ecs.world_get_component(&w, canvas_entity, UI_Canvas)
 	testing.expect(t, canvas != nil)
@@ -69,4 +73,3 @@ test_ui_canvas_components_lifecycle :: proc(t: ^testing.T) {
 
 	ecs.world_remove_component(&w, canvas_entity, UI_Canvas_Target)
 }
-

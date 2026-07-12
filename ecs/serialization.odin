@@ -1,20 +1,26 @@
 package ecs
 
+import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
-import "base:runtime"
 import "core:testing"
 
 Serializer_Procs :: struct {
-	serialize:        proc(ptr: rawptr, allocator: runtime.Allocator) -> ([]byte, json.Marshal_Error),
-	deserialize:      proc(ptr: rawptr, data: []byte) -> json.Unmarshal_Error,
-	add_to_entity:    proc(w: ^World, entity: Entity, data: []byte) -> json.Unmarshal_Error,
+	serialize:     proc(ptr: rawptr, allocator: runtime.Allocator) -> ([]byte, json.Marshal_Error),
+	deserialize:   proc(ptr: rawptr, data: []byte) -> json.Unmarshal_Error,
+	add_to_entity: proc(w: ^World, entity: Entity, data: []byte) -> json.Unmarshal_Error,
 }
 
 Resource_Serializer_Procs :: struct {
-	serialize:            proc(w: ^World, allocator: runtime.Allocator) -> ([]byte, json.Marshal_Error),
-	deserialize_or_add:   proc(w: ^World, data: []byte) -> json.Unmarshal_Error,
+	serialize:          proc(
+		w: ^World,
+		allocator: runtime.Allocator,
+	) -> (
+		[]byte,
+		json.Marshal_Error,
+	),
+	deserialize_or_add: proc(w: ^World, data: []byte) -> json.Unmarshal_Error,
 }
 
 Serialization_Error :: enum {
@@ -28,7 +34,7 @@ Serialization_Error :: enum {
 
 world_register_component :: proc(w: ^World, $T: typeid) {
 	tid := typeid_of(T)
-	
+
 	s_proc := proc(ptr: rawptr, allocator: runtime.Allocator) -> ([]byte, json.Marshal_Error) {
 		val := (^T)(ptr)
 		return json.marshal(val^, allocator = allocator)
@@ -45,9 +51,9 @@ world_register_component :: proc(w: ^World, $T: typeid) {
 		return nil
 	}
 
-	w.serialization_procs[tid] = Serializer_Procs{
-		serialize = s_proc,
-		deserialize = d_proc,
+	w.serialization_procs[tid] = Serializer_Procs {
+		serialize     = s_proc,
+		deserialize   = d_proc,
 		add_to_entity = a_proc,
 	}
 
@@ -56,7 +62,14 @@ world_register_component :: proc(w: ^World, $T: typeid) {
 	w.serialization_types[tid] = name_clone
 }
 
-world_serialize_entity :: proc(w: ^World, entity: Entity, allocator := context.allocator) -> (data: []byte, err: Serialization_Error) {
+world_serialize_entity :: proc(
+	w: ^World,
+	entity: Entity,
+	allocator := context.allocator,
+) -> (
+	data: []byte,
+	err: Serialization_Error,
+) {
 	if !world_is_alive(w, entity) do return nil, .Entity_Not_Alive
 
 	// Get all components of this entity
@@ -73,7 +86,7 @@ world_serialize_entity :: proc(w: ^World, entity: Entity, allocator := context.a
 		if !registered do continue // skip unregistered components
 
 		name := w.serialization_types[tid]
-		
+
 		comp_bytes, m_err := procs.serialize(comp.data, context.temp_allocator)
 		if m_err != nil do return nil, .JSON_Marshal_Error
 
@@ -139,7 +152,14 @@ world_patch_entity :: proc(w: ^World, entity: Entity, data: []byte) -> Serializa
 	return .None
 }
 
-world_serialize_resource :: proc(w: ^World, $T: typeid, allocator := context.allocator) -> (data: []byte, err: Serialization_Error) {
+world_serialize_resource :: proc(
+	w: ^World,
+	$T: typeid,
+	allocator := context.allocator,
+) -> (
+	data: []byte,
+	err: Serialization_Error,
+) {
 	ptr := world_get_resource(w, T)
 	if ptr == nil do return nil, .Resource_Not_Found
 	bytes, m_err := json.marshal(ptr^, allocator = allocator)
@@ -156,7 +176,7 @@ world_deserialize_resource :: proc(w: ^World, $T: typeid, data: []byte) -> Seria
 		world_add_resource(w, res)
 		return .None
 	}
-	
+
 	u_err := json.unmarshal(data, ptr)
 	if u_err != nil do return .JSON_Unmarshal_Error
 	return .None
@@ -183,8 +203,8 @@ world_register_resource_serialization :: proc(w: ^World, $T: typeid) {
 		return json.unmarshal(data, ptr)
 	}
 
-	w.resource_serialization_procs[tid] = Resource_Serializer_Procs{
-		serialize = s_proc,
+	w.resource_serialization_procs[tid] = Resource_Serializer_Procs {
+		serialize          = s_proc,
 		deserialize_or_add = d_proc,
 	}
 
@@ -193,7 +213,13 @@ world_register_resource_serialization :: proc(w: ^World, $T: typeid) {
 	w.resource_serialization_types[tid] = name_clone
 }
 
-world_serialize_all_resources :: proc(w: ^World, allocator := context.allocator) -> (data: []byte, err: Serialization_Error) {
+world_serialize_all_resources :: proc(
+	w: ^World,
+	allocator := context.allocator,
+) -> (
+	data: []byte,
+	err: Serialization_Error,
+) {
 	json_map := make(map[string]json.Value, context.temp_allocator)
 	defer delete(json_map)
 
@@ -248,7 +274,7 @@ test_serialization :: proc(t: ^testing.T) {
 	}
 
 	Test_Comp_B :: struct {
-		name: string,
+		name:   string,
 		active: bool,
 	}
 
@@ -291,7 +317,7 @@ test_serialization :: proc(t: ^testing.T) {
 
 	// Test Resource Serialization/Deserialization
 	world_add_resource(&w, Test_Res{score = 9001})
-	
+
 	// Dynamic/registered resource serialization
 	res_data, res_err := world_serialize_all_resources(&w)
 	testing.expect_value(t, res_err, Serialization_Error.None)
