@@ -59,7 +59,7 @@ env = { BENCH_FORMAT = "{{ env.BENCH_FORMAT | default(value='markdown;graph') }}
 depends = ["build-odin", "install-odpkg", "copy_vendor_libs"]
 run = [
   { task = "make_build" },
-  "odin test benches {{vars.vet}} {{vars.target}} {{vars.test}} -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
+  "odin test benches {{vars.vet}} {{vars.target}} -o:{{vars.optimize}} -define:ODIN_TEST_THREADS=1 -out:{{vars.BUILD_OUTPUT_DIR}}bench_runner.exe",
 ]
 
 [tasks.build]
@@ -85,7 +85,6 @@ run = ["rm -rf build/"]
 description = "Generate documentation for all packages containing .odin files"
 run = "bash scripts/gen_docs.sh"
 run_windows = "powershell -File scripts/gen_docs.ps1"
-
 
 [tasks.make_build]
 quiet = true
