@@ -484,6 +484,76 @@ ui_projection_matrix :: proc(w, h: f32) -> linalg.Matrix4f32 {
 	}
 }
 
+ui_render_node_background_and_border :: proc(
+	w: ^ecs.World,
+	entity: ecs.Entity,
+	node: ^UI_Node,
+	batch: ^graphics.Batch2D,
+	vp: linalg.Matrix4f32,
+	style: ^UI_Style,
+) {
+	bg_color := node.bg_color
+	border_color := node.border_color
+	border_width := node.border_width
+
+	if style != nil {
+		state_style := style.normal
+		hovered, pressed := ui_get_interaction_state(w, entity)
+		if pressed {
+			state_style = style.active
+		} else if hovered {
+			state_style = style.hover
+		}
+
+		bg_color = state_style.bg_color
+		border_color = state_style.border_color
+		if state_style.border_width >= 0.0 {
+			border_width = state_style.border_width
+		}
+	}
+
+	// Draw background
+	if bg_color.a > 0.0 {
+		twoD.draw_rect(
+			batch,
+			{node.rect.x, node.rect.y},
+			{node.rect.w, node.rect.h},
+			bg_color,
+			vp,
+		)
+	}
+	// Draw border
+	if border_width > 0.0 && border_color.a > 0.0 {
+		t := border_width
+		// top border
+		twoD.draw_rect(batch, {node.rect.x, node.rect.y}, {node.rect.w, t}, border_color, vp)
+		// bottom border
+		twoD.draw_rect(
+			batch,
+			{node.rect.x, node.rect.y + node.rect.h - t},
+			{node.rect.w, t},
+			border_color,
+			vp,
+		)
+		// left border
+		twoD.draw_rect(
+			batch,
+			{node.rect.x, node.rect.y + t},
+			{t, node.rect.h - 2 * t},
+			border_color,
+			vp,
+		)
+		// right border
+		twoD.draw_rect(
+			batch,
+			{node.rect.x + node.rect.w - t, node.rect.y + t},
+			{t, node.rect.h - 2 * t},
+			border_color,
+			vp,
+		)
+	}
+}
+
 ui_render_node :: proc(
 	w: ^ecs.World,
 	entity: ecs.Entity,
@@ -491,136 +561,32 @@ ui_render_node :: proc(
 	vp: linalg.Matrix4f32,
 ) {
 	node := ecs.world_get_component(w, entity, UI_Node)
-	if node != nil {
-		bg_color := node.bg_color
-		border_color := node.border_color
-		border_width := node.border_width
-		text_color_override: [4]f32
-		has_text_color_override := false
+	if node == nil do return
 
-		// Apply UI_Style if present
-		style := ecs.world_get_component(w, entity, UI_Style)
-		if style != nil {
-			state_style := style.normal
-			// TODO: have a system for each element that applies the style
-			btn := ecs.world_get_component(w, entity, Button)
-			if btn != nil {
-				if btn.is_pressed {
-					state_style = style.active
-				} else if btn.is_hovered {
-					state_style = style.hover
-				}
+	style := ecs.world_get_component(w, entity, UI_Style)
+
+	ui_render_node_background_and_border(w, entity, node, batch, vp, style)
+
+	comps, ok := ecs.world_get_all_components(w, entity, context.temp_allocator)
+	if ok {
+		defer delete(comps, context.temp_allocator)
+		for c in comps {
+			switch c.id {
+			case Label:
+				ui_render_label(w, entity, node, (^Label)(c.data), batch, vp, style)
+			case Checkbox:
+				ui_render_checkbox(w, entity, node, (^Checkbox)(c.data), batch, vp, style)
+			case Slider:
+				ui_render_slider(w, entity, node, (^Slider)(c.data), batch, vp, style)
+			case Toggle:
+				ui_render_toggle(w, entity, node, (^Toggle)(c.data), batch, vp, style)
+			case ProgressBar:
+				ui_render_progress_bar(w, entity, node, (^ProgressBar)(c.data), batch, vp, style)
+			case RadioButton:
+				ui_render_radio_button(w, entity, node, (^RadioButton)(c.data), batch, vp, style)
+			case TextInput:
+				ui_render_text_input(w, entity, node, (^TextInput)(c.data), batch, vp, style)
 			}
-
-			bg_color = state_style.bg_color
-			border_color = state_style.border_color
-			if state_style.border_width >= 0.0 {
-				border_width = state_style.border_width
-			}
-			if state_style.text_color.a > 0.0 {
-				text_color_override = state_style.text_color
-				has_text_color_override = true
-			}
-		}
-
-		// Draw background
-		if bg_color.a > 0.0 {
-			twoD.draw_rect(
-				batch,
-				{node.rect.x, node.rect.y},
-				{node.rect.w, node.rect.h},
-				bg_color,
-				vp,
-			)
-		}
-		// Draw border
-		if border_width > 0.0 && border_color.a > 0.0 {
-			t := border_width
-			// top border
-			twoD.draw_rect(batch, {node.rect.x, node.rect.y}, {node.rect.w, t}, border_color, vp)
-			// bottom border
-			twoD.draw_rect(
-				batch,
-				{node.rect.x, node.rect.y + node.rect.h - t},
-				{node.rect.w, t},
-				border_color,
-				vp,
-			)
-			// left border
-			twoD.draw_rect(
-				batch,
-				{node.rect.x, node.rect.y + t},
-				{t, node.rect.h - 2 * t},
-				border_color,
-				vp,
-			)
-			// right border
-			twoD.draw_rect(
-				batch,
-				{node.rect.x + node.rect.w - t, node.rect.y + t},
-				{t, node.rect.h - 2 * t},
-				border_color,
-				vp,
-			)
-		}
-
-		// Draw basic elements: Label
-		label := ecs.world_get_component(w, entity, Label)
-		if label != nil {
-			font := ecs.world_get_resource(w, graphics.Font)
-			if font != nil {
-				font_size := label.font_size > 0.0 ? label.font_size : font.pixel_height
-				x := node.rect.x + node.padding[3]
-				y := node.rect.y + node.padding[0]
-
-				size_scale := font.pixel_height > 0.0 ? (font_size / font.pixel_height) : 1.0
-				baseline_offset := f32(font.ascent) * font.scale * size_scale
-				det2 := vp[0][0] * vp[1][1] - vp[0][1] * vp[1][0]
-				if det2 < 0.0 {
-					y += baseline_offset
-				} else {
-					y -= baseline_offset
-				}
-
-				color := has_text_color_override ? text_color_override : label.color
-				graphics.draw_text(batch, label.text, x, y, font, 1.0, color, vp)
-			}
-		}
-
-		// Draw basic elements: Checkbox
-		checkbox := ecs.world_get_component(w, entity, Checkbox)
-		if checkbox != nil && checkbox.checked {
-			pad: f32 = 4.0
-			rect_x := node.rect.x + pad
-			rect_y := node.rect.y + pad
-			rect_w := max(f32(0.0), node.rect.w - pad * 2.0)
-			rect_h := max(f32(0.0), node.rect.h - pad * 2.0)
-			twoD.draw_rect(batch, {rect_x, rect_y}, {rect_w, rect_h}, checkbox.active_color, vp)
-		}
-
-		// Draw basic elements: Slider
-		slider := ecs.world_get_component(w, entity, Slider)
-		if slider != nil {
-			fill_w := node.rect.w * clamp(slider.value, 0.0, 1.0)
-			if fill_w > 0.0 {
-				twoD.draw_rect(
-					batch,
-					{node.rect.x, node.rect.y},
-					{fill_w, node.rect.h},
-					slider.active_color,
-					vp,
-				)
-			}
-			knob_w := node.rect.h
-			knob_x := node.rect.x + fill_w - knob_w / 2.0
-			knob_x = clamp(knob_x, node.rect.x, node.rect.x + node.rect.w - knob_w)
-			twoD.draw_rect(
-				batch,
-				{knob_x, node.rect.y},
-				{knob_w, node.rect.h},
-				slider.knob_color,
-				vp,
-			)
 		}
 	}
 
@@ -754,87 +720,3 @@ ui_get_root_canvas :: proc(w: ^ecs.World, e: ecs.Entity) -> ecs.Entity {
 	return curr
 }
 
-UI_INTERACTION_SYSTEMS_GROUP := []app.System_Dependency {
-	rawptr(ui_button_interaction_system),
-	rawptr(ui_slider_interaction_system),
-}
-
-@(tag = "system")
-ui_button_interaction_system :: proc(
-	world: ^ecs.World,
-	mouse_inp: input.Input(input.MouseButtonCode),
-) {
-	for arch in ecs.query(world, UI_Node, Button) {
-		nodes := ecs.arch_get_field(arch, UI_Node)
-		buttons := ecs.arch_get_field(arch, Button)
-		entities := ecs.arch_get_entities(arch)
-
-		for i in 0 ..< len(nodes) {
-			node := &nodes[i]
-			btn := &buttons[i]
-			entity := entities[i]
-
-			root_canvas := ui_get_root_canvas(world, entity)
-			mpos := input.mouse_position(mouse_inp, root_canvas)
-			is_down := input.is_down(mouse_inp, input.MouseButtonCode.Left)
-			is_pressed := input.is_pressed(mouse_inp, input.MouseButtonCode.Left)
-
-			in_bounds :=
-				mpos.x >= node.rect.x &&
-				mpos.x <= node.rect.x + node.rect.w &&
-				mpos.y >= node.rect.y &&
-				mpos.y <= node.rect.y + node.rect.h
-
-			btn.is_hovered = in_bounds
-			btn.is_clicked = false
-
-			if in_bounds {
-				if is_pressed {
-					btn.is_pressed = true
-				}
-				if btn.is_pressed {
-					if !is_down {
-						btn.is_pressed = false
-						btn.is_clicked = true
-					}
-				}
-			} else {
-				btn.is_pressed = false
-			}
-		}
-	}
-}
-
-@(tag = "system")
-ui_slider_interaction_system :: proc(
-	world: ^ecs.World,
-	mouse_inp: input.Input(input.MouseButtonCode),
-) {
-	for arch in ecs.query(world, UI_Node, Slider) {
-		nodes := ecs.arch_get_field(arch, UI_Node)
-		sliders := ecs.arch_get_field(arch, Slider)
-		entities := ecs.arch_get_entities(arch)
-
-		for i in 0 ..< len(nodes) {
-			node := &nodes[i]
-			slider := &sliders[i]
-			entity := entities[i]
-
-			root_canvas := ui_get_root_canvas(world, entity)
-			mpos := input.mouse_position(mouse_inp, root_canvas)
-			is_down := input.is_down(mouse_inp, input.MouseButtonCode.Left)
-
-			in_bounds :=
-				mpos.x >= node.rect.x &&
-				mpos.x <= node.rect.x + node.rect.w &&
-				mpos.y >= node.rect.y &&
-				mpos.y <= node.rect.y + node.rect.h
-
-			if is_down && in_bounds {
-				local_x := mpos.x - node.rect.x
-				slider.value = clamp(local_x / node.rect.w, 0.0, 1.0)
-				ui_mark_dirty(world, entity)
-			}
-		}
-	}
-}

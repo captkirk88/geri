@@ -4,7 +4,9 @@ import "../app"
 import "../ecs"
 import errors "../errors"
 import graphics "../graphics"
+import input "../input"
 import "base:runtime"
+import "vendor:sdl3"
 
 UI_Plugin :: proc() -> app.Plugin {
 	return app.Plugin{build = ui_plugin_build, destroy = nil, data = nil}
@@ -17,6 +19,13 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, 
 		ui_state_destroy(s)
 	})
 
+	// Add default UI input configuration
+	config := UI_Input_Config {
+		mouse_click    = .Left,
+		gamepad_submit = .South,
+	}
+	ecs.world_add_resource(&a.world, config)
+
 	// Initialize observers for dirty flag and cascading despawn
 	ui_observer_init(&a.world)
 
@@ -24,6 +33,10 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, 
 	app.app_add_system(a, app.Update, ui_layout_system)
 	app.app_add_system(a, app.Update, ui_button_interaction_system)
 	app.app_add_system(a, app.Update, ui_slider_interaction_system)
+	app.app_add_system(a, app.Update, ui_checkbox_interaction_system)
+	app.app_add_system(a, app.Update, ui_toggle_interaction_system)
+	app.app_add_system(a, app.Update, ui_radio_button_interaction_system)
+	app.app_add_system(a, app.Update, ui_text_input_interaction_system)
 
 	// Add render system to app.Render, scheduled before the main render system flushes Batch2D
 	app.app_add_system(

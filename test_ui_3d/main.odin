@@ -611,10 +611,7 @@ main :: proc() {
 		&application,
 		app.Update,
 		sphere_ui_input_system,
-		before = []app.System_Dependency {
-			rawptr(ui.ui_button_interaction_system),
-			rawptr(ui.ui_slider_interaction_system),
-		},
+		before = ui.UI_INTERACTION_SYSTEMS_GROUP,
 	)
 	app.app_add_system(&application, app.Update, sphere_ui_feedback_system)
 	app.app_add_system(

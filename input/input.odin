@@ -196,6 +196,7 @@ Input_State :: struct {
 	last_tap_time:            time.Tick,
 	is_dragging:              bool,
 	targets:                  map[ecs.Entity]Target_Input_State,
+	text_input_buffer:        [dynamic]u8,
 }
 
 Target_Input_State :: struct {
@@ -394,6 +395,7 @@ input_state_init :: proc(state: ^Input_State, allocator := context.allocator) {
 	state.trigger_deadzone = 0.05
 
 	state.targets = make(map[ecs.Entity]Target_Input_State, 8, allocator)
+	state.text_input_buffer = make([dynamic]u8, allocator)
 }
 
 input_state_destroy :: proc(state: ^Input_State) {
@@ -403,6 +405,7 @@ input_state_destroy :: proc(state: ^Input_State) {
 	delete(state.mouse_buttons_released)
 
 	delete(state.gestures_active)
+	delete(state.text_input_buffer)
 
 	// Close open gamepad handles
 	for _, gp in state.gamepads {

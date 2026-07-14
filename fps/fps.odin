@@ -8,7 +8,6 @@ import graphics "../graphics"
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
-import "core:time"
 import "vendor:wgpu"
 
 // Number of samples to average over for a smooth FPS reading.
@@ -19,7 +18,6 @@ Fps_Counter :: struct {
 	samples:      [FPS_SAMPLE_COUNT]f64,
 	sample_index: int,
 	sample_count: int,
-	prev_tick:    time.Tick,
 	// Customization
 	color:        [4]f32,
 	font_size:    f32,
@@ -50,16 +48,14 @@ fps_average :: proc(c: ^Fps_Counter) -> f64 {
 
 // System: runs in First — samples the wall-clock delta and records it.
 @(tag = "system")
-fps_tick_system :: proc(fps_res: params.Res(Fps_Counter)) {
+fps_tick_system :: proc(fps_res: params.Res(Fps_Counter), dt: params.Res(app.DeltaTime)) {
 	c := fps_res.ptr
 	if c == nil do return
 
-	dt := time.tick_lap_time(&c.prev_tick)
-	if dt == 0 do return // first frame, no delta yet
+	dt_val := dt.ptr != nil ? dt.ptr.f32_seconds : f32(0.0)
+	if dt_val <= 0.0 do return
 
-	dt_sec := f64(time.duration_seconds(dt))
-	if dt_sec <= 0 do return
-
+	dt_sec := f64(dt_val)
 	c.samples[c.sample_index] = 1.0 / dt_sec
 	c.sample_index = (c.sample_index + 1) % FPS_SAMPLE_COUNT
 	if c.sample_count < FPS_SAMPLE_COUNT {

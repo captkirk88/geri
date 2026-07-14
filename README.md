@@ -8,6 +8,9 @@ Geri is a ECS (Entity Component System) framework for Odin inspired by [Bevy](ht
 
 <img src="test_ui_screenshot.png?v=2" width="400" height="300" />
 
+> [!NOTE]
+> This is work-in-progress. Expect breaking api changes, catastrophic apocalyptic omens from beyond the veil, etc.
+
 ## Why Odin?
 
 It is actually pretty good. Would be nice if it supported methods but at least ols allows "fake methods" as a config option.

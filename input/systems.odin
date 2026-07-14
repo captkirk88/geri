@@ -247,6 +247,7 @@ input_update_system :: proc(
 	clear(&state.gestures_active)
 	clear(&state.gamepad_buttons_pressed)
 	clear(&state.gamepad_buttons_released)
+	clear(&state.text_input_buffer)
 	state.mouse_wheel = {0, 0}
 	state.mouse_delta = {0, 0}
 	state.pan_delta = {0, 0}
@@ -353,6 +354,14 @@ input_update_system :: proc(
 			state.gestures_active[.Pinch] = true
 			state.pinch_scale = ev.pinch.scale
 		case .PINCH_END:
+
+		case .TEXT_INPUT:
+			if ev.text.text != nil {
+				text_str := string(ev.text.text)
+				for i in 0 ..< len(text_str) {
+					append(&state.text_input_buffer, text_str[i])
+				}
+			}
 
 		// Gamepad handling
 		case .GAMEPAD_ADDED:

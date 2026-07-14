@@ -267,6 +267,26 @@ setup_system :: proc(commands: params.Commands) {
 	)
 	ecs.commands_add_relation(commands.ptr, sld.entity, ecs.ChildOf, box_canvas.entity)
 
+	// Text Input
+	txt := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		txt,
+		ui.UI_Node {
+			width        = {180.0, .Pixels},
+			height       = {30.0, .Pixels},
+			padding      = {5.0, 5.0, 5.0, 5.0},
+			bg_color     = {0.1, 0.1, 0.1, 1.0},
+			border_color = {0.4, 0.4, 0.4, 1.0},
+			border_width = 1.0,
+		},
+		ui.TextInput {
+			text       = make([dynamic]u8, context.allocator),
+			max_length = 16,
+		},
+	)
+	ecs.commands_add_relation(commands.ptr, txt.entity, ecs.ChildOf, box_canvas.entity)
+
+
 	// Add showcase state resource
 	ecs.commands_add_resource(
 		commands.ptr,

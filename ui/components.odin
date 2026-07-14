@@ -2,6 +2,7 @@ package ui
 
 import "../ecs"
 import graphics "../graphics"
+import input "../input"
 
 // The unit of measurement for a UI_Size value (pixels, percent, or auto).
 UI_Size_Unit :: enum {
@@ -189,4 +190,10 @@ UI_Canvas :: struct {
 UI_Canvas_Target :: struct {
 	target: graphics.Render_Target,
 	batch:  graphics.Batch2D,
+}
+
+// Configurable key/button bindings for UI interactions.
+UI_Input_Config :: struct {
+	mouse_click:    input.MouseButtonCode,
+	gamepad_submit: input.GamepadButton,
 }

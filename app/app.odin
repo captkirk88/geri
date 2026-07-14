@@ -7,11 +7,16 @@ import "base:intrinsics"
 import "core:strings"
 import "core:sync"
 import "core:thread"
+import "core:time"
 
 Plugin :: struct {
 	build:   proc(plugin: Plugin, app: ^App) -> (errors.Error, bool),
 	destroy: proc(plugin: Plugin, app: ^App),
 	data:    rawptr,
+}
+
+DeltaTime :: struct {
+	f32_seconds: f32,
 }
 
 App :: struct {
@@ -23,6 +28,7 @@ App :: struct {
 	thread_pool:     ^thread.Pool,
 	has_thread_pool: bool,
 	has_started:     bool,
+	last_frame_time: time.Tick,
 }
 
 Schedule_Label :: distinct string
@@ -79,6 +85,8 @@ app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> err
 			p->destroy(&app)
 		}
 	}
+
+	app.last_frame_time = time.tick_now()
 
 	return errors.Ok(App){value = app}
 }
@@ -207,6 +215,13 @@ app_run_schedule :: proc(app: ^App, schedule_label: Schedule_Label) {
 
 // Runs a single frame update iteration, executing the update schedules (First, PreUpdate, Update, PostUpdate, Last, Render).
 app_update :: proc(app: ^App) {
+	now := time.tick_now()
+	duration := time.tick_since(app.last_frame_time)
+	dt := f32(time.duration_seconds(duration))
+	app.last_frame_time = now
+
+	ecs.world_add_resource(&app.world, DeltaTime{f32_seconds = dt})
+
 	if app.has_started == false {
 		app.has_started = true
 		app_run_schedule(app, Startup)
