@@ -45,6 +45,9 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, 
 		ui_render_system,
 		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
+
+	app.app_add_system(a, app.Last, ui_text_input_cleanup_system)
+
 	return {}, true
 }
 

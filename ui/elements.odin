@@ -66,6 +66,11 @@ RadioButton :: struct {
 	is_pressed:   bool,
 }
 
+TextInputWrap :: enum {
+	Scroll,
+	Multiline,
+}
+
 // Text input control component.
 TextInput :: struct {
 	text:                   [dynamic]u8,
@@ -80,6 +85,11 @@ TextInput :: struct {
 	// Backspace/B Repeat State
 	backspace_held:         bool,
 	backspace_repeat_timer: f32,
+
+	// Cursor & Viewport Navigation
+	cursor_index:           int,
+	scroll_offset:          int,
+	wrap_mode:              TextInputWrap,
 }
 
 ui_get_interaction_state :: proc(w: ^ecs.World, entity: ecs.Entity) -> (hovered, pressed: bool) {
@@ -339,24 +349,124 @@ ui_render_text_input :: proc(
 		}
 
 		text_str := string(text_input.text[:])
-		graphics.draw_text(batch, text_str, x, y, font, 1.0, color, vp)
+		max_w := max(f32(0.0), node.rect.w - node.padding[1] - node.padding[3])
+		scale_val := stbtt.ScaleForPixelHeight(&font.info, font.pixel_height)
 
-		if text_input.is_focused {
-			// Calculate cursor position by counting character advances
-			text_w: f32 = 0.0
-			scale_val := stbtt.ScaleForPixelHeight(&font.info, font.pixel_height)
-			for r in text_str {
-				g := graphics.get_glyph(font, r, font.pixel_height)
-				text_w += f32(g.advance) * scale_val
+		if text_input.wrap_mode == .Scroll {
+			text_input.scroll_offset = clamp(text_input.scroll_offset, 0, len(text_input.text))
+			
+			// If cursor moved to the left of the scroll offset
+			if text_input.cursor_index < text_input.scroll_offset {
+				text_input.scroll_offset = text_input.cursor_index
 			}
 
-			cursor_x := x + text_w
-			cursor_w: f32 = 2.0
-			max_h := max(f32(0.0), node.rect.h - node.padding[0] - node.padding[2])
-			cursor_h := min(font_size, max_h)
-			cursor_y := node.rect.y + node.padding[0]
+			// Measure width of string from scroll offset to cursor
+			width_to_cursor: f32 = 0.0
+			for r in text_str[text_input.scroll_offset : text_input.cursor_index] {
+				g := graphics.get_glyph(font, r, font.pixel_height)
+				width_to_cursor += f32(g.advance) * scale_val
+			}
 
-			twoD.draw_rect(batch, {cursor_x, cursor_y}, {cursor_w, cursor_h}, color, vp)
+			// If cursor exceeds viewport bounds, slide viewport right
+			for width_to_cursor > max_w && text_input.scroll_offset < text_input.cursor_index {
+				r := rune(text_str[text_input.scroll_offset])
+				g := graphics.get_glyph(font, r, font.pixel_height)
+				char_w := f32(g.advance) * scale_val
+				width_to_cursor -= char_w
+				text_input.scroll_offset += 1
+			}
+
+			// Find visible string length
+			visible_len := 0
+			visible_w: f32 = 0.0
+			for r in text_str[text_input.scroll_offset:] {
+				g := graphics.get_glyph(font, r, font.pixel_height)
+				char_w := f32(g.advance) * scale_val
+				if visible_w + char_w > max_w do break
+				visible_w += char_w
+				visible_len += 1
+			}
+
+			visible_str := text_str[text_input.scroll_offset : text_input.scroll_offset + visible_len]
+			graphics.draw_text(batch, visible_str, x, y, font, 1.0, color, vp)
+
+			if text_input.is_focused {
+				cursor_x := x + width_to_cursor
+				cursor_w: f32 = 2.0
+				max_h := max(f32(0.0), node.rect.h - node.padding[0] - node.padding[2])
+				cursor_h := min(font_size, max_h)
+				cursor_y := node.rect.y + node.padding[0]
+
+				twoD.draw_rect(batch, {cursor_x, cursor_y}, {cursor_w, cursor_h}, color, vp)
+			}
+		} else { // Multiline Wrap
+			Line :: struct {
+				start_idx: int,
+				end_idx:   int,
+				width:     f32,
+			}
+			lines := make([dynamic]Line, context.temp_allocator)
+			curr_start := 0
+			curr_w: f32 = 0.0
+
+			for i := 0; i < len(text_str); i += 1 {
+				r := rune(text_str[i])
+				g := graphics.get_glyph(font, r, font.pixel_height)
+				char_w := f32(g.advance) * scale_val
+
+				if curr_w + char_w > max_w && i > curr_start {
+					append(&lines, Line{start_idx = curr_start, end_idx = i, width = curr_w})
+					curr_start = i
+					curr_w = char_w
+				} else {
+					curr_w += char_w
+				}
+			}
+			append(&lines, Line{start_idx = curr_start, end_idx = len(text_str), width = curr_w})
+
+			is_y_down := det2 < 0.0
+			line_spacing := font_size
+
+			cursor_line_idx := 0
+			cursor_line_offset_x: f32 = 0.0
+
+			for line, idx in lines {
+				if text_input.cursor_index >= line.start_idx && text_input.cursor_index <= line.end_idx {
+					cursor_line_idx = idx
+					for r in text_str[line.start_idx : text_input.cursor_index] {
+						g := graphics.get_glyph(font, r, font.pixel_height)
+						cursor_line_offset_x += f32(g.advance) * scale_val
+					}
+					break
+				}
+			}
+
+			for line, idx in lines {
+				line_y := y
+				if is_y_down {
+					line_y += f32(idx) * line_spacing
+				} else {
+					line_y -= f32(idx) * line_spacing
+				}
+				visible_str := text_str[line.start_idx : line.end_idx]
+				graphics.draw_text(batch, visible_str, x, line_y, font, 1.0, color, vp)
+			}
+
+			if text_input.is_focused {
+				cursor_y_offset := f32(cursor_line_idx) * line_spacing
+				cursor_y := node.rect.y + node.padding[0]
+				if is_y_down {
+					cursor_y += cursor_y_offset
+				} else {
+					cursor_y -= cursor_y_offset
+				}
+				cursor_x := x + cursor_line_offset_x
+				cursor_w: f32 = 2.0
+				max_h := max(f32(0.0), node.rect.h - node.padding[0] - node.padding[2])
+				cursor_h := min(font_size, max_h)
+
+				twoD.draw_rect(batch, {cursor_x, cursor_y}, {cursor_w, cursor_h}, color, vp)
+			}
 		}
 	}
 }
@@ -725,6 +835,23 @@ ui_text_input_interaction_system :: proc(
 			if text_input.is_focused {
 				any_focused = true
 
+				// Clamp cursor index in case text length changed externally
+				text_input.cursor_index = clamp(text_input.cursor_index, 0, len(text_input.text))
+
+				// Move cursor with Left/Right arrow keys
+				if input.is_pressed(key_inp, input.KeyCode.Left) {
+					if text_input.cursor_index > 0 {
+						text_input.cursor_index -= 1
+						ui_mark_dirty(world, entity)
+					}
+				}
+				if input.is_pressed(key_inp, input.KeyCode.Right) {
+					if text_input.cursor_index < len(text_input.text) {
+						text_input.cursor_index += 1
+						ui_mark_dirty(world, entity)
+					}
+				}
+
 				// 1. Process frame's typed text from input buffer
 				if mouse_inp.state != nil && len(mouse_inp.state.text_input_buffer) > 0 {
 					for char in mouse_inp.state.text_input_buffer {
@@ -761,8 +888,13 @@ ui_text_input_interaction_system :: proc(
 						// Check regex_pattern filter
 						if len(text_input.restrict_regex_pattern) > 0 {
 							candidate := make([dynamic]u8, context.temp_allocator)
-							append(&candidate, ..text_input.text[:])
+							if text_input.cursor_index > 0 {
+								append(&candidate, ..text_input.text[:text_input.cursor_index])
+							}
 							append(&candidate, char)
+							if text_input.cursor_index < len(text_input.text) {
+								append(&candidate, ..text_input.text[text_input.cursor_index:])
+							}
 							candidate_str := string(candidate[:])
 
 							re, err := regex.create(
@@ -782,7 +914,8 @@ ui_text_input_interaction_system :: proc(
 							}
 						}
 
-						append(&text_input.text, char)
+						inject_at(&text_input.text, text_input.cursor_index, char)
+						text_input.cursor_index += 1
 						text_input.is_pressed = false // clear pressed state on typing
 						ui_mark_dirty(world, entity)
 					}
@@ -800,9 +933,10 @@ ui_text_input_interaction_system :: proc(
 						text_input.backspace_held = true
 						text_input.backspace_repeat_timer = 0.0
 
-						// Pop first character immediately
-						if len(text_input.text) > 0 {
-							pop(&text_input.text)
+						// Pop character at cursor_index - 1
+						if text_input.cursor_index > 0 {
+							ordered_remove(&text_input.text, text_input.cursor_index - 1)
+							text_input.cursor_index -= 1
 							ui_mark_dirty(world, entity)
 						}
 					} else {
@@ -810,8 +944,9 @@ ui_text_input_interaction_system :: proc(
 
 						// If we are in the repeating phase (>= 0.4s)
 						if text_input.backspace_repeat_timer >= 0.4 {
-							if len(text_input.text) > 0 {
-								pop(&text_input.text)
+							if text_input.cursor_index > 0 {
+								ordered_remove(&text_input.text, text_input.cursor_index - 1)
+								text_input.cursor_index -= 1
 								ui_mark_dirty(world, entity)
 							}
 							text_input.backspace_repeat_timer -= 0.05
@@ -842,5 +977,20 @@ ui_text_input_interaction_system :: proc(
 		_ = sdl3.StartTextInput(window_res.ptr.window)
 	} else if !any_focused && sdl_active {
 		_ = sdl3.StopTextInput(window_res.ptr.window)
+	}
+}
+
+@(tag = "system")
+ui_text_input_cleanup_system :: proc(
+	world: ^ecs.World,
+	exit_events: params.EventReader(app.App_Exit_Event),
+) {
+	if len(exit_events.events) > 0 {
+		for arch in ecs.query(world, TextInput) {
+			text_inputs := ecs.arch_get_field(arch, TextInput)
+			for &ti in text_inputs {
+				delete(ti.text)
+			}
+		}
 	}
 }
