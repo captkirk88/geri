@@ -1,13 +1,14 @@
 package graphics
 
+import log "../logging"
+import bbcode "../logging/bbcode"
 import c "core:c"
 import "core:math/linalg"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:unicode/utf8"
 import stbtt "vendor:stb/truetype"
-
-import bbcode "../logging/bbcode"
 
 Text_Span :: struct {
 	text:          string,
@@ -169,6 +170,326 @@ append_glyph :: proc(
 	return f32(g.advance) * f.scale
 }
 
+measure_spans_width :: proc(font: ^Font, spans: []Text_Span, default_scale: f32) -> f32 {
+	total_width: f32 = 0.0
+	for span in spans {
+		current_pixel_height :=
+			span.font_size if span.font_size > 0.0 else (font != nil ? font.pixel_height : 0.0)
+		active_font := font
+		if span.font_path != "" {
+			if custom_font, ok := custom_fonts_get(span.font_path, current_pixel_height); ok {
+				active_font = custom_font
+			}
+		}
+		scale_val :=
+			stbtt.ScaleForPixelHeight(&active_font.info, current_pixel_height) if active_font != nil else default_scale
+		for r in span.text {
+			if r == '\n' do continue
+			char_w :=
+				active_font != nil ? (f32(get_glyph(active_font, r, current_pixel_height).advance) * scale_val) : (8.0 * default_scale)
+			total_width += char_w
+		}
+	}
+	return total_width
+}
+
+draw_text_ttf :: proc(
+	batch: ^Batch2D,
+	spans: []Text_Span,
+	font: ^Font,
+	cursor_x, cursor_y: ^f32,
+	start_x: f32,
+	is_y_down: bool,
+	vp: linalg.Matrix4f32,
+	max_width: f32,
+	multiline: bool,
+	total_width: f32,
+) {
+	accumulated_width: f32 = 0.0
+	rendered_ellipsis := false
+
+	for span in spans {
+		current_pixel_height := span.font_size if span.font_size > 0.0 else font.pixel_height
+		active_font := font
+		if span.font_path != "" {
+			if custom_font, ok := custom_fonts_get(span.font_path, current_pixel_height); ok {
+				active_font = custom_font
+			}
+		}
+
+		scale_val := stbtt.ScaleForPixelHeight(&active_font.info, current_pixel_height)
+
+		for r, index in span.text {
+			if r == '\n' {
+				cursor_x^ = start_x
+				line_offset :=
+					f32(active_font.ascent - active_font.descent + active_font.line_gap) *
+					scale_val
+				if is_y_down {
+					cursor_y^ += line_offset
+				} else {
+					cursor_y^ -= line_offset
+				}
+				continue
+			}
+
+			char_w := f32(get_glyph(active_font, r, current_pixel_height).advance) * scale_val
+
+			// 1. Single-line Ellipsis Truncation
+			if max_width > 0.0 && !multiline && total_width > max_width {
+				g_dot := get_glyph(active_font, '.', current_pixel_height)
+				dot_w := f32(g_dot.advance) * scale_val
+				ellipsis_w := dot_w * 3.0
+				if accumulated_width + char_w > max_width - ellipsis_w {
+					if !rendered_ellipsis {
+						for _ in 0 ..< 3 {
+							append_glyph_preloaded(
+								batch,
+								active_font,
+								g_dot,
+								cursor_x^,
+								cursor_y^,
+								span.color,
+								vp,
+								span.bold,
+								span.italic,
+							)
+							cursor_x^ += dot_w
+						}
+						rendered_ellipsis = true
+					}
+					break
+				}
+			}
+
+			// 2. Multiline Word Wrapping (Allocation-free lookahead)
+			if max_width > 0.0 && multiline && r != ' ' && r != '\t' {
+				word_w: f32 = 0.0
+				sub_str := span.text[index:]
+				for cr in sub_str {
+					if cr == ' ' || cr == '\t' || cr == '\n' do break
+					cg := get_glyph(active_font, cr, current_pixel_height)
+					word_w += f32(cg.advance) * scale_val
+				}
+				if cursor_x^ + word_w > start_x + max_width && cursor_x^ > start_x {
+					cursor_x^ = start_x
+					line_offset :=
+						f32(active_font.ascent - active_font.descent + active_font.line_gap) *
+						scale_val
+					if is_y_down {
+						cursor_y^ += line_offset
+					} else {
+						cursor_y^ -= line_offset
+					}
+				}
+			}
+
+			g := get_glyph(active_font, r, current_pixel_height)
+			advance := f32(g.advance) * scale_val
+			if span.has_bg {
+				y0, y1: f32
+				if is_y_down {
+					y0 = cursor_y^ - f32(active_font.ascent) * scale_val
+					y1 = cursor_y^ - f32(active_font.descent) * scale_val
+				} else {
+					y0 = cursor_y^ + f32(active_font.descent) * scale_val
+					y1 = cursor_y^ + f32(active_font.ascent) * scale_val
+				}
+				append_quad(batch, cursor_x^, y0, cursor_x^ + advance, y1, span.bg_color, vp)
+			}
+			append_glyph_preloaded(
+				batch,
+				active_font,
+				g,
+				cursor_x^,
+				cursor_y^,
+				span.color,
+				vp,
+				span.bold,
+				span.italic,
+			)
+			if span.underline {
+				thickness := max(f32(1.0), scale_val)
+				if is_y_down {
+					y_under := cursor_y^ - f32(active_font.descent) * scale_val * 0.3
+					append_quad(
+						batch,
+						cursor_x^,
+						y_under,
+						cursor_x^ + advance,
+						y_under + thickness,
+						span.color,
+						vp,
+					)
+				} else {
+					y_under := cursor_y^ + f32(active_font.descent) * scale_val * 0.3
+					append_quad(
+						batch,
+						cursor_x^,
+						y_under - thickness,
+						cursor_x^ + advance,
+						y_under,
+						span.color,
+						vp,
+					)
+				}
+			}
+			if span.strikethrough {
+				y_strike :=
+					is_y_down ? (cursor_y^ - f32(active_font.ascent) * scale_val * 0.3) : (cursor_y^ + f32(active_font.ascent) * scale_val * 0.3)
+				thickness := max(f32(1.0), scale_val)
+				append_quad(
+					batch,
+					cursor_x^,
+					y_strike - thickness / 2.0,
+					cursor_x^ + advance,
+					y_strike + thickness / 2.0,
+					span.color,
+					vp,
+				)
+			}
+			cursor_x^ += advance
+			accumulated_width += char_w
+		}
+	}
+}
+
+draw_text_fallback :: proc(
+	batch: ^Batch2D,
+	spans: []Text_Span,
+	scale: f32,
+	cursor_x, cursor_y: ^f32,
+	start_x: f32,
+	is_y_down: bool,
+	vp: linalg.Matrix4f32,
+	max_width: f32,
+	multiline: bool,
+	total_width: f32,
+) {
+	accumulated_width: f32 = 0.0
+	rendered_ellipsis := false
+
+	for span in spans {
+		for r, index in span.text {
+			ch := u8(r)
+			if ch == '\n' {
+				cursor_x^ = start_x
+				if is_y_down {
+					cursor_y^ += 10.0 * scale
+				} else {
+					cursor_y^ -= 10.0 * scale
+				}
+				continue
+			}
+
+			char_w := 8.0 * scale
+
+			// 1. Single-line Ellipsis Truncation
+			if max_width > 0.0 && !multiline && total_width > max_width {
+				ellipsis_w := char_w * 3.0
+				if accumulated_width + char_w > max_width - ellipsis_w {
+					if !rendered_ellipsis {
+						for _ in 0 ..< 3 {
+							append_char(
+								batch,
+								'.',
+								cursor_x^,
+								cursor_y^,
+								scale,
+								span.color,
+								vp,
+								span.bold,
+								span.italic,
+							)
+							cursor_x^ += char_w
+						}
+						rendered_ellipsis = true
+					}
+					break
+				}
+			}
+
+			// 2. Multiline Word Wrapping (Allocation-free lookahead)
+			if max_width > 0.0 && multiline && ch != ' ' && ch != '\t' {
+				word_w: f32 = 0.0
+				sub_str := span.text[index:]
+				for cr in sub_str {
+					if cr == ' ' || cr == '\t' || cr == '\n' do break
+					word_w += char_w
+				}
+				if cursor_x^ + word_w > start_x + max_width && cursor_x^ > start_x {
+					cursor_x^ = start_x
+					if is_y_down {
+						cursor_y^ += 10.0 * scale
+					} else {
+						cursor_y^ -= 10.0 * scale
+					}
+				}
+			}
+
+			if span.has_bg {
+				append_quad(
+					batch,
+					cursor_x^,
+					cursor_y^,
+					cursor_x^ + 8.0 * scale,
+					cursor_y^ + 8.0 * scale,
+					span.bg_color,
+					vp,
+				)
+			}
+			append_char(
+				batch,
+				ch,
+				cursor_x^,
+				cursor_y^,
+				scale,
+				span.color,
+				vp,
+				span.bold,
+				span.italic,
+			)
+			if span.underline {
+				if is_y_down {
+					append_quad(
+						batch,
+						cursor_x^,
+						cursor_y^ + 8.0 * scale,
+						cursor_x^ + 8.0 * scale,
+						cursor_y^ + 8.0 * scale + scale,
+						span.color,
+						vp,
+					)
+				} else {
+					append_quad(
+						batch,
+						cursor_x^,
+						cursor_y^ - scale,
+						cursor_x^ + 8.0 * scale,
+						cursor_y^,
+						span.color,
+						vp,
+					)
+				}
+			}
+			if span.strikethrough {
+				y_strike := is_y_down ? (cursor_y^ + 4.0 * scale) : (cursor_y^ + 3.0 * scale)
+				append_quad(
+					batch,
+					cursor_x^,
+					y_strike,
+					cursor_x^ + 8.0 * scale,
+					y_strike + scale,
+					span.color,
+					vp,
+				)
+			}
+			cursor_x^ += char_w
+			accumulated_width += char_w
+		}
+	}
+}
+
 draw_text :: proc(
 	batch: ^Batch2D,
 	text: string,
@@ -177,195 +498,44 @@ draw_text :: proc(
 	scale: f32 = 1.0,
 	default_color: [4]f32 = {1, 1, 1, 1},
 	vp: linalg.Matrix4f32 = linalg.MATRIX4F32_IDENTITY,
+	max_width: f32 = 0.0,
+	multiline: bool = false,
 ) {
+	spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
+	is_y_down := text_is_y_down(vp)
+	total_width := measure_spans_width(font, spans, scale)
+
+	cursor_x := x
+	cursor_y := y
+
 	if font != nil {
-		spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
-
-		is_y_down := text_is_y_down(vp)
-
-		cursor_x := x
-		cursor_y := y
-
-		for span in spans {
-			current_pixel_height := span.font_size if span.font_size > 0.0 else font.pixel_height
-			active_font := font
-			if span.font_path != "" {
-				if custom_font, ok := custom_fonts_get(span.font_path, current_pixel_height); ok {
-					active_font = custom_font
-				}
-			}
-
-			scale_val := stbtt.ScaleForPixelHeight(&active_font.info, current_pixel_height)
-
-			for r in span.text {
-				if r == '\n' {
-					cursor_x = x
-					line_offset :=
-						f32(active_font.ascent - active_font.descent + active_font.line_gap) *
-						scale_val
-					if is_y_down {
-						cursor_y += line_offset
-					} else {
-						cursor_y -= line_offset
-					}
-					continue
-				}
-				g := get_glyph(active_font, r, current_pixel_height)
-				advance := f32(g.advance) * scale_val
-				if span.has_bg {
-					y0, y1: f32
-					if is_y_down {
-						y0 = cursor_y - f32(active_font.ascent) * scale_val
-						y1 = cursor_y - f32(active_font.descent) * scale_val
-					} else {
-						y0 = cursor_y + f32(active_font.descent) * scale_val
-						y1 = cursor_y + f32(active_font.ascent) * scale_val
-					}
-					append_quad(batch, cursor_x, y0, cursor_x + advance, y1, span.bg_color, vp)
-				}
-				append_glyph_preloaded(
-					batch,
-					active_font,
-					g,
-					cursor_x,
-					cursor_y,
-					span.color,
-					vp,
-					span.bold,
-					span.italic,
-				)
-				if span.underline {
-					thickness := max(f32(1.0), scale_val)
-					if is_y_down {
-						y_under := cursor_y - f32(active_font.descent) * scale_val * 0.3
-						append_quad(
-							batch,
-							cursor_x,
-							y_under,
-							cursor_x + advance,
-							y_under + thickness,
-							span.color,
-							vp,
-						)
-					} else {
-						y_under := cursor_y + f32(active_font.descent) * scale_val * 0.3
-						append_quad(
-							batch,
-							cursor_x,
-							y_under - thickness,
-							cursor_x + advance,
-							y_under,
-							span.color,
-							vp,
-						)
-					}
-				}
-				if span.strikethrough {
-					y_strike: f32
-					if is_y_down {
-						y_strike = cursor_y - f32(active_font.ascent) * scale_val * 0.3
-					} else {
-						y_strike = cursor_y + f32(active_font.ascent) * scale_val * 0.3
-					}
-					thickness := max(f32(1.0), scale_val)
-					append_quad(
-						batch,
-						cursor_x,
-						y_strike - thickness / 2.0,
-						cursor_x + advance,
-						y_strike + thickness / 2.0,
-						span.color,
-						vp,
-					)
-				}
-				cursor_x += advance
-			}
-		}
+		draw_text_ttf(
+			batch,
+			spans,
+			font,
+			&cursor_x,
+			&cursor_y,
+			x,
+			is_y_down,
+			vp,
+			max_width,
+			multiline,
+			total_width,
+		)
 	} else {
-		spans := parse_bbcode_spans(text, default_color, context.temp_allocator)
-
-		is_y_down := vp[1][1] < 0.0
-
-		cursor_x := x
-		cursor_y := y
-
-		for span in spans {
-			for i in 0 ..< len(span.text) {
-				ch := span.text[i]
-				if ch == '\n' {
-					cursor_x = x
-					if is_y_down {
-						cursor_y += 10.0 * scale
-					} else {
-						cursor_y -= 10.0 * scale
-					}
-					continue
-				}
-				if span.has_bg {
-					append_quad(
-						batch,
-						cursor_x,
-						cursor_y,
-						cursor_x + 8.0 * scale,
-						cursor_y + 8.0 * scale,
-						span.bg_color,
-						vp,
-					)
-				}
-				append_char(
-					batch,
-					ch,
-					cursor_x,
-					cursor_y,
-					scale,
-					span.color,
-					vp,
-					span.bold,
-					span.italic,
-				)
-				if span.underline {
-					if is_y_down {
-						append_quad(
-							batch,
-							cursor_x,
-							cursor_y + 8.0 * scale,
-							cursor_x + 8.0 * scale,
-							cursor_y + 8.0 * scale + scale,
-							span.color,
-							vp,
-						)
-					} else {
-						append_quad(
-							batch,
-							cursor_x,
-							cursor_y - scale,
-							cursor_x + 8.0 * scale,
-							cursor_y,
-							span.color,
-							vp,
-						)
-					}
-				}
-				if span.strikethrough {
-					y_strike: f32
-					if is_y_down {
-						y_strike = cursor_y + 4.0 * scale
-					} else {
-						y_strike = cursor_y + 3.0 * scale
-					}
-					append_quad(
-						batch,
-						cursor_x,
-						y_strike,
-						cursor_x + 8.0 * scale,
-						y_strike + scale,
-						span.color,
-						vp,
-					)
-				}
-				cursor_x += 8.0 * scale
-			}
-		}
+		draw_text_fallback(
+			batch,
+			spans,
+			scale,
+			&cursor_x,
+			&cursor_y,
+			x,
+			is_y_down,
+			vp,
+			max_width,
+			multiline,
+			total_width,
+		)
 	}
 }
 
@@ -626,6 +796,12 @@ font8x8_basic := [128][8]u8 {
 }
 
 append_quad :: proc(batch: ^Batch2D, x0, y0, x1, y1: f32, color: [4]f32, vp: linalg.Matrix4f32) {
+	local_x0 := x0
+	local_y0 := y0
+	local_x1 := x1
+	local_y1 := y1
+	if !batch2d_clip_quad(batch, &local_x0, &local_y0, &local_x1, &local_y1) do return
+
 	project_point :: proc(vp: linalg.Matrix4f32, p: [2]f32) -> [2]f32 {
 		p4 := [4]f32{p.x, p.y, 0.0, 1.0}
 		res4 := vp * p4
@@ -636,10 +812,10 @@ append_quad :: proc(batch: ^Batch2D, x0, y0, x1, y1: f32, color: [4]f32, vp: lin
 	base_idx := u32(len(batch.vertices))
 	append(
 		&batch.vertices,
-		Vertex2D{position = project_point(vp, {x0, y0}), color = color},
-		Vertex2D{position = project_point(vp, {x1, y0}), color = color},
-		Vertex2D{position = project_point(vp, {x1, y1}), color = color},
-		Vertex2D{position = project_point(vp, {x0, y1}), color = color},
+		Vertex2D{position = project_point(vp, {local_x0, local_y0}), color = color},
+		Vertex2D{position = project_point(vp, {local_x1, local_y0}), color = color},
+		Vertex2D{position = project_point(vp, {local_x1, local_y1}), color = color},
+		Vertex2D{position = project_point(vp, {local_x0, local_y1}), color = color},
 	)
 	append(
 		&batch.indices,

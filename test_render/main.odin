@@ -1,13 +1,11 @@
-// This is just a test program for the graphics module.
 package main
 
 import camera "../camera"
 import transform "../transform"
 import "base:runtime"
+import "core:math"
 import "core:math/linalg"
 import "core:os"
-import "core:strconv"
-import "core:testing"
 import "core:time"
 
 import "../app"
@@ -16,225 +14,93 @@ import "../ecs/params"
 import errors "../errors"
 import fps "../fps"
 import graphics "../graphics"
+import input "../input"
 import log "../logging"
+import plugins "../plugins"
 import gtime "../time"
 import "../windowing"
 import "core:c"
-import "core:math"
-import "core:math/rand"
 import "vendor:sdl3"
 
-Batch2D :: graphics.Batch2D
+import "scenes"
 
-Vertex2D :: graphics.Vertex2D
-Render_Context :: graphics.Render_Context
-
-Circle :: struct {
-	radius: f32,
-	color:  [4]f32,
+Scene :: struct {
+	name: string,
+	init: proc(world: ^ecs.World),
+	exit: proc(world: ^ecs.World),
 }
 
-Velocity2D :: struct {
-	x, y: f32,
-}
-
-append_circle :: proc(
-	batch: ^Batch2D,
-	center: [2]f32,
-	radius: f32,
-	color: [4]f32,
-	vp: linalg.Matrix4f32 = linalg.MATRIX4F32_IDENTITY,
-	segments := 32,
-) {
-	base_idx := u32(len(batch.vertices))
-
-	project_point :: proc(vp: linalg.Matrix4f32, p: [2]f32) -> [2]f32 {
-		p4 := [4]f32{p.x, p.y, 0.0, 1.0}
-		res4 := vp * p4
-		if res4.w != 0.0 {
-			return res4.xy / res4.w
+clear_all_entities :: proc(world: ^ecs.World) {
+	for i in 0 ..< len(world.entities) {
+		meta := world.entities[i]
+		ent := ecs.Entity {
+			id  = u64(i),
+			gen = u64(meta.gen),
 		}
-		return res4.xy
-	}
-
-	// Add center vertex
-	append(&batch.vertices, Vertex2D{position = project_point(vp, center), color = color})
-
-	// Add perimeter vertices
-	for i in 0 ..< segments {
-		angle := f32(i) * 2.0 * math.PI / f32(segments)
-		pos := [2]f32{center.x + radius * math.cos(angle), center.y + radius * math.sin(angle)}
-		append(&batch.vertices, Vertex2D{position = project_point(vp, pos), color = color})
-	}
-
-	// Add indices for triangles
-	for i in 1 ..< segments {
-		append(&batch.indices, base_idx, base_idx + u32(i), base_idx + u32(i + 1))
-	}
-	// Last triangle connecting back to the start
-	append(&batch.indices, base_idx, base_idx + u32(segments), base_idx + 1)
-}
-
-setup_system :: proc(commands: params.Commands, window_res: params.Res(windowing.Window_Context)) {
-	circle_count := 10_000
-
-	margin: f32 = 0.08 // keep circles fully on screen (radius)
-	win_w: c.int
-	win_h: c.int
-	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-	w := f32(win_w)
-	h := f32(win_h)
-
-	// Spawn Camera
-	cam_ec := ecs.commands_spawn(commands.ptr)
-	cam: camera.Camera
-	camera.init(&cam)
-	camera.set_orthographic(&cam, -w / 2, w / 2, -h / 2, h / 2, -1.0, 1.0)
-
-	// Create Transform and set its translation to (0, 0, 1)
-	t: transform.Transform
-	transform.init(&t)
-	transform.set_translation(&t, {0, 0, 1})
-
-	ecs.entity_commands_add_components(cam_ec, cam, t)
-
-	for i in 0 ..< circle_count {
-		fx := rand.float32_range(-w / 2 + 15, w / 2 - 15)
-		fy := rand.float32_range(-h / 2 + 15, h / 2 - 15)
-
-		hue := rand.float32_range(0, math.PI * 2)
-		r := math.cos(hue) * 0.5 + 0.5
-		g := math.cos(hue + math.PI * 2.0 / 3.0) * 0.5 + 0.5
-		b := math.cos(hue + math.PI * 4.0 / 3.0) * 0.5 + 0.5
-
-		vx := rand.float32_range(-150, 150)
-		vy := rand.float32_range(-150, 150)
-
-		t: transform.Transform
-		transform.init(&t)
-		transform.set_translation(&t, {fx, fy, 0})
-
-		ec := ecs.commands_spawn(commands.ptr)
-		ecs.entity_commands_add_components(
-			ec,
-			t,
-			Velocity2D{x = vx, y = vy},
-			Circle{radius = 15.0, color = {r, g, b, 1.0}},
-		)
+		if ecs.world_is_alive(world, ent) {
+			ecs.world_despawn(world, ent)
+		}
 	}
 }
 
-draw_circles_system :: proc(
+scenes_list := []Scene {
+	{name = "Circles", init = scenes.circles_setup, exit = proc(world: ^ecs.World) {
+			ecs.world_clear(world)
+		}},
+	{name = "Sprites", init = scenes.sprite_setup, exit = proc(world: ^ecs.World) {
+			ecs.world_clear(world)
+		}},
+	{name = "Models", init = scenes.model_setup, exit = proc(world: ^ecs.World) {
+			ecs.world_clear(world)
+		}},
+}
+
+SceneManager :: struct {
+	current_scene_idx: int,
+}
+
+scene_transition_system :: proc(
 	world: ^ecs.World,
-	batch2d: params.Res(Batch2D),
-	render_ctx: params.Res(Render_Context),
-	window_res: params.Res(windowing.Window_Context),
-	cam_param: params.Single(camera.Camera),
+	sdl_events: params.EventReader(sdl3.Event),
+	mgr_res: params.Res(SceneManager),
+	dt_res: params.Res(app.DeltaTime),
+	elapsed: params.Local(f32),
 ) {
-	// Guard: skip if device has been released by cleanup system (would write to freed memory)
-	if render_ctx.ptr == nil || render_ctx.ptr.device == nil do return
+	mgr := mgr_res.ptr
+	if mgr == nil do return
+	dt := dt_res.ptr
 
-	batch := batch2d.ptr
-	if world == nil || batch == nil do return
+	dt_sec := dt.f32_seconds if dt != nil else 1.0 / 60.0
+	elapsed.value^ += dt_sec
 
-	win_w, win_h: c.int
-	if window_res.ptr != nil && window_res.ptr.window != nil {
-		sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-	} else {
-		win_w = 800
-		win_h = 600
-	}
-	ui_scale := f32(win_w) / 800.0
-
-	vp: linalg.Matrix4f32 = linalg.MATRIX4F32_IDENTITY
-	t := ecs.world_get_component(world, cam_param.entity, transform.Transform)
-	if t != nil {
-		vp = camera.get_view_projection(cam_param.value^, t^)
+	should_transition := false
+	if elapsed.value^ >= 1.0 {
+		elapsed.value^ = 0.0
+		should_transition = true
 	}
 
-	for arch in ecs.query(world, transform.Transform, Circle) {
-		transforms := ecs.arch_get_field(arch, transform.Transform)
-		circles := ecs.arch_get_field(arch, Circle)
-
-		for i in 0 ..< len(transforms) {
-			pos := transform.get_translation(transforms[i])
-			circle := circles[i]
-			append_circle(batch, pos.xy, circle.radius, circle.color, vp)
+	for event in sdl_events.events {
+		if event.type == .KEY_DOWN && event.key.key == sdl3.K_ESCAPE {
+			should_transition = true
+			elapsed.value^ = 0.0
 		}
 	}
 
-	font := ecs.world_get_resource(world, graphics.Font)
-	if font != nil {
-		graphics.draw_text(
-			batch,
-			"Hello [color=red]Red[/color], [color=green]Green[/color], and [color=blue]Blue[/color]!",
-			-350 * ui_scale,
-			150 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
-		graphics.draw_text(
-			batch,
-			"Beautiful [color=orange]Odin[/color] TTF [opacity=0.4]Opacity 0.4[/opacity] and [opacity=0.8]0.8[/opacity]!",
-			-350 * ui_scale,
-			100 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
-		graphics.draw_text(
-			batch,
-			"[bg=blue]Solid Blue Background[/bg] - [bg=green][bg_opacity=0.4]Transparent Green BG[/bg_opacity][/bg]",
-			-350 * ui_scale,
-			50 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
-		graphics.draw_text(
-			batch,
-			"[c=#ff0022]Custom Hex Colors and [b]Bold[/b] [i]Italic[/i] [u]Underline[/u] [s]Strikethrough[/s][/c]!",
-			-350 * ui_scale,
-			0 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
-		graphics.draw_text(
-			batch,
-			"Arial size 16: [font_size=16]Small Arial text[/font_size]",
-			-350 * ui_scale,
-			-50 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
-		graphics.draw_text(
-			batch,
-			"Consolas: [font=C:\\Windows\\Fonts\\consola.ttf][font_size=20]Consolas size 20[/font_size] and normal[/font]",
-			-350 * ui_scale,
-			-100 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
-		graphics.draw_text(
-			batch,
-			"Non-existent fallback: [font=non_existent.ttf]Should render as default font[/font]",
-			-350 * ui_scale,
-			-150 * ui_scale,
-			font,
-			1.0 * ui_scale,
-			{1, 1, 1, 1},
-			vp,
-		)
+	if should_transition {
+		// Exit current scene
+		scenes_list[mgr.current_scene_idx].exit(world)
+
+		// Move to next scene
+		mgr.current_scene_idx = (mgr.current_scene_idx + 1) % len(scenes_list)
+		log.info("Transitioning to scene: %s", scenes_list[mgr.current_scene_idx].name)
+
+		active_scene := ecs.world_get_resource(world, scenes.ActiveScene)
+		if active_scene != nil {
+			active_scene.index = mgr.current_scene_idx
+		}
+
+		// Init next scene
+		scenes_list[mgr.current_scene_idx].init(world)
 	}
 }
 
@@ -248,7 +114,6 @@ movement_system :: proc(
 
 	win_w, win_h: c.int
 	sdl3.GetWindowSize(window_res.ptr.window, &win_w, &win_h)
-	win_scale := sdl3.GetWindowDisplayScale(window_res.ptr.window)
 	half_w := f32(win_w) / 2
 	half_h := f32(win_h) / 2
 
@@ -266,20 +131,22 @@ movement_system :: proc(
 		dt = 1.0 / 60.0
 	}
 
-	for arch in ecs.query(world, transform.Transform, Velocity2D) {
+	// This system queries Circle movement.
+	for arch in ecs.query(world, transform.Transform, scenes.Velocity2D) {
 		transforms := ecs.arch_get_field(arch, transform.Transform)
-		velocities := ecs.arch_get_field(arch, Velocity2D)
+		velocities := ecs.arch_get_field(arch, scenes.Velocity2D)
+		circles := ecs.arch_get_field(arch, scenes.Circle)
 
 		for i in 0 ..< len(transforms) {
 			t := &transforms[i]
 			vel := &velocities[i]
+			circle := circles[i]
 
 			pos := transform.get_translation(t^)
 			pos.x += vel.x * dt
 			pos.y += vel.y * dt
 
-			// Bounce off screen boundaries, accounting for radius (15.0)
-			radius: f32 = 15.0
+			radius := circle.radius
 
 			if pos.x - radius < -half_w {
 				pos.x = -half_w + radius
@@ -303,22 +170,66 @@ movement_system :: proc(
 }
 
 camera_resize_system :: proc(
+	world: ^ecs.World,
 	resize_events: params.EventReader(windowing.Window_Resized_Event),
-	cam_param: params.Single(camera.Camera),
+	active_scene: params.Res(scenes.ActiveScene),
 ) {
 	for event in resize_events.events {
 		w := f32(event.width)
 		h := f32(event.height)
-		camera.set_orthographic(cam_param.value, -w / 2, w / 2, -h / 2, h / 2, -1.0, 1.0)
+		for arch in ecs.query(world, camera.Camera) {
+			cameras := ecs.arch_get_field(arch, camera.Camera)
+			for i in 0 ..< len(cameras) {
+				if active_scene.ptr != nil && active_scene.ptr.index == 2 {
+					camera.set_perspective(&cameras[i], 45.0 * math.RAD_PER_DEG, w / h, 0.1, 100.0)
+				} else {
+					camera.set_orthographic(
+						&cameras[i],
+						-w / 2,
+						w / 2,
+						-h / 2,
+						h / 2,
+						-100.0,
+						100.0,
+					)
+				}
+			}
+		}
 	}
 }
 
 main :: proc() {
 	args := os.args
 	duration := 10 * time.Second
-	if len(args) > 1 {
-		if parsed, ok := gtime.parse_duration(args[1]); ok {
+	start_scene_idx := 0
+
+	// Argument parsing:
+	//   test_render.exe [scene_name] [duration]
+	// scene_name is matched case-insensitively against scene names (e.g. "sprites", "circles")
+	// duration accepts suffixes like 10s, 5m, etc.
+	for i := 1; i < len(args); i += 1 {
+		arg := args[i]
+		if parsed, ok := gtime.parse_duration(arg); ok {
 			duration = parsed
+		} else {
+			// Try to match as a scene name prefix (in Odin for-range: first var is value, second is index)
+			for scene, scene_idx in scenes_list {
+				if len(arg) <= len(scene.name) {
+					matched := true
+					for k in 0 ..< len(arg) {
+						ac := arg[k] | 0x20 // to lowercase
+						sc := scene.name[k] | 0x20
+						if ac != sc {
+							matched = false
+							break
+						}
+					}
+					if matched {
+						start_scene_idx = scene_idx
+						break
+					}
+				}
+			}
 		}
 	}
 
@@ -326,6 +237,8 @@ main :: proc() {
 		app.app_init(
 			[]app.Plugin {
 				windowing.Window_Plugin(),
+				input.Input_Plugin(),
+				plugins.Assets_Plugin(),
 				graphics.Render_Plugin(),
 				fps.Fps_Plugin(.Uncapped),
 			},
@@ -335,29 +248,56 @@ main :: proc() {
 		app.app_destroy(&application)
 	}
 
-	window_ctx := ecs.world_get_resource(&application.world, windowing.Window_Context)
-	assert(window_ctx != nil, "Window_Context should be initialized")
-	if window_ctx != nil {
-		assert(window_ctx.window != nil, "SDL Window should be created")
+	// Register SceneManager resource
+	mgr := SceneManager {
+		current_scene_idx = start_scene_idx,
 	}
+	app.app_add_resource(&application, mgr)
 
-	render_ctx := ecs.world_get_resource(&application.world, Render_Context)
-	assert(render_ctx != nil, "Render_Context should be initialized")
-	if render_ctx != nil {
-		assert(render_ctx.device != nil, "WGPU Device should be created")
+	// Register ActiveScene resource
+	active_scene := scenes.ActiveScene {
+		index = start_scene_idx,
 	}
+	app.app_add_resource(&application, active_scene)
 
 	// Register systems
-	app.app_add_system(&application, app.Startup, setup_system)
+	app.app_add_system(&application, app.Update, scene_transition_system)
 	app.app_add_system(&application, app.Update, movement_system)
 	app.app_add_system(&application, app.Update, camera_resize_system)
+	app.app_add_system(&application, app.Update, scenes.model_update_system)
 
+	// Register Sprite animation system
+	app.app_add_system(&application, app.Update, graphics.sprite_animation_system)
+
+	// Register draw/rendering systems before main render flush
 	app.app_add_system(
 		&application,
 		app.Render,
-		draw_circles_system,
+		scenes.circles_draw_system,
 		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
 	)
+	app.app_add_system(
+		&application,
+		app.Render,
+		scenes.sprite_draw_system,
+		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
+	)
+	app.app_add_system(
+		&application,
+		app.Render,
+		scenes.model_draw_system,
+		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
+	)
+	app.app_add_system(
+		&application,
+		app.Render,
+		graphics.sprite_render_system,
+		before = []app.System_Dependency{rawptr(graphics.main_render_system)},
+	)
+
+	// Initialize the starting scene
+	log.info("Starting scene: %s (index %d)", scenes_list[start_scene_idx].name, start_scene_idx)
+	scenes_list[start_scene_idx].init(&application.world)
 
 	start_time := time.tick_now()
 	screenshot_taken := false
@@ -366,10 +306,10 @@ main :: proc() {
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
 
-		if !screenshot_taken && elapsed >= screenshot_time {
-			graphics.capture_screenshot(&application.world, "test_render_screenshot.png", .PNG)
-			screenshot_taken = true
-		}
+		// if !screenshot_taken && elapsed >= screenshot_time {
+		// 	graphics.capture_screenshot(&application.world, "test_render_screenshot.png", .PNG)
+		// 	screenshot_taken = true
+		// }
 
 		if elapsed >= duration {
 			ecs.emit(&application.world, app.App_Exit_Event{})

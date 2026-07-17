@@ -19,8 +19,8 @@ import stbi "vendor:stb/image"
 import "vendor:wgpu"
 
 Gif_Frame_Task_Data :: struct {
-	writer: ^gif.Gif_Writer,
-	pixels: []byte,
+	writer:    ^gif.Gif_Writer,
+	pixels:    []byte,
 	allocator: runtime.Allocator,
 }
 

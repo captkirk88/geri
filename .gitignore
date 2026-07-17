@@ -18,7 +18,10 @@ build/
 # strudel designs
 *.strudel
 
-# images
+# assets
+!**blob.*.gif
+*.aseprite
+*.mtl
+*.obj
 test_*.png
 !test_ui_screenshot.png
-*.aseprite

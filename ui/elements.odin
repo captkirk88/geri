@@ -24,6 +24,19 @@ Label :: struct {
 	text:      string,
 	color:     [4]f32,
 	font_size: f32, // 0 = derive from font's default size
+	multiline: bool,
+}
+
+// Scrollbar selection control component.
+Scrollbar :: struct {
+	value:        f32, // scroll position [0.0 - 1.0]
+	knob_size:    f32, // handle knob size [0.1 - 1.0]
+	active_color: [4]f32,
+	knob_color:   [4]f32,
+	is_hovered:   bool,
+	is_pressed:   bool,
+	is_focused:   bool,
+	vertical:     bool,
 }
 
 // Checkbox selection control component.
@@ -152,7 +165,56 @@ ui_render_label :: proc(
 				color = state_style.text_color
 			}
 		}
-		graphics.draw_text(batch, label.text, x, y, font, 1.0, color, vp)
+		max_width := node.rect.w - node.padding[1] - node.padding[3]
+		graphics.draw_text(batch, label.text, x, y, font, 1.0, color, vp, max_width, label.multiline)
+	}
+}
+
+ui_render_scrollbar :: proc(
+	w: ^ecs.World,
+	entity: ecs.Entity,
+	node: ^UI_Node,
+	scrollbar: ^Scrollbar,
+	batch: ^graphics.Batch2D,
+	vp: linalg.Matrix4f32,
+	style: ^UI_Style,
+) {
+	track_color := scrollbar.active_color
+	knob_color := scrollbar.knob_color
+
+	if style != nil {
+		state_style := style.normal
+		hovered, pressed := ui_get_interaction_state(w, entity)
+		if pressed {
+			state_style = style.active
+		} else if hovered {
+			state_style = style.hover
+		}
+		if state_style.bg_color.a > 0.0 {
+			track_color = state_style.bg_color
+		}
+		if state_style.border_color.a > 0.0 {
+			knob_color = state_style.border_color
+		}
+	}
+
+	// 1. Draw Scrollbar Track
+	twoD.draw_rect(batch, {node.rect.x, node.rect.y}, {node.rect.w, node.rect.h}, track_color, vp)
+
+	// 2. Draw Scrollbar Knob
+	knob_sz := clamp(scrollbar.knob_size, 0.1, 1.0)
+	val := clamp(scrollbar.value, 0.0, 1.0)
+
+	if scrollbar.vertical {
+		knob_h := node.rect.h * knob_sz
+		max_travel := node.rect.h - knob_h
+		knob_y := node.rect.y + max_travel * val
+		twoD.draw_rect(batch, {node.rect.x, knob_y}, {node.rect.w, knob_h}, knob_color, vp)
+	} else {
+		knob_w := node.rect.w * knob_sz
+		max_travel := node.rect.w - knob_w
+		knob_x := node.rect.x + max_travel * val
+		twoD.draw_rect(batch, {knob_x, node.rect.y}, {knob_w, node.rect.h}, knob_color, vp)
 	}
 }
 
@@ -354,7 +416,7 @@ ui_render_text_input :: proc(
 
 		if text_input.wrap_mode == .Scroll {
 			text_input.scroll_offset = clamp(text_input.scroll_offset, 0, len(text_input.text))
-			
+
 			// If cursor moved to the left of the scroll offset
 			if text_input.cursor_index < text_input.scroll_offset {
 				text_input.scroll_offset = text_input.cursor_index
@@ -362,7 +424,7 @@ ui_render_text_input :: proc(
 
 			// Measure width of string from scroll offset to cursor
 			width_to_cursor: f32 = 0.0
-			for r in text_str[text_input.scroll_offset : text_input.cursor_index] {
+			for r in text_str[text_input.scroll_offset:text_input.cursor_index] {
 				g := graphics.get_glyph(font, r, font.pixel_height)
 				width_to_cursor += f32(g.advance) * scale_val
 			}
@@ -387,7 +449,8 @@ ui_render_text_input :: proc(
 				visible_len += 1
 			}
 
-			visible_str := text_str[text_input.scroll_offset : text_input.scroll_offset + visible_len]
+			visible_str := text_str[text_input.scroll_offset:text_input.scroll_offset +
+			visible_len]
 			graphics.draw_text(batch, visible_str, x, y, font, 1.0, color, vp)
 
 			if text_input.is_focused {
@@ -399,7 +462,7 @@ ui_render_text_input :: proc(
 
 				twoD.draw_rect(batch, {cursor_x, cursor_y}, {cursor_w, cursor_h}, color, vp)
 			}
-		} else { // Multiline Wrap
+		} else { 	// Multiline Wrap
 			Line :: struct {
 				start_idx: int,
 				end_idx:   int,
@@ -431,9 +494,10 @@ ui_render_text_input :: proc(
 			cursor_line_offset_x: f32 = 0.0
 
 			for line, idx in lines {
-				if text_input.cursor_index >= line.start_idx && text_input.cursor_index <= line.end_idx {
+				if text_input.cursor_index >= line.start_idx &&
+				   text_input.cursor_index <= line.end_idx {
 					cursor_line_idx = idx
-					for r in text_str[line.start_idx : text_input.cursor_index] {
+					for r in text_str[line.start_idx:text_input.cursor_index] {
 						g := graphics.get_glyph(font, r, font.pixel_height)
 						cursor_line_offset_x += f32(g.advance) * scale_val
 					}
@@ -448,7 +512,7 @@ ui_render_text_input :: proc(
 				} else {
 					line_y -= f32(idx) * line_spacing
 				}
-				visible_str := text_str[line.start_idx : line.end_idx]
+				visible_str := text_str[line.start_idx:line.end_idx]
 				graphics.draw_text(batch, visible_str, x, line_y, font, 1.0, color, vp)
 			}
 
@@ -475,6 +539,7 @@ ui_render_text_input :: proc(
 UI_INTERACTION_SYSTEMS_GROUP := []app.System_Dependency {
 	rawptr(ui_button_interaction_system),
 	rawptr(ui_slider_interaction_system),
+	rawptr(ui_scrollbar_interaction_system),
 	rawptr(ui_checkbox_interaction_system),
 	rawptr(ui_toggle_interaction_system),
 	rawptr(ui_radio_button_interaction_system),
@@ -923,7 +988,8 @@ ui_text_input_interaction_system :: proc(
 
 				// 2. Process Backspace or Gamepad B (East) with hold-repeat using DeltaTime
 				is_backspace_down := input.is_down(key_inp, input.KeyCode.Backspace)
-				is_gamepad_b_down := gp_inp.state != nil && input.is_down(gp_inp, input.GamepadButton.East)
+				is_gamepad_b_down :=
+					gp_inp.state != nil && input.is_down(gp_inp, input.GamepadButton.East)
 				is_delete_down := is_backspace_down || is_gamepad_b_down
 
 				if is_delete_down {
@@ -994,3 +1060,118 @@ ui_text_input_cleanup_system :: proc(
 		}
 	}
 }
+
+@(tag = "system")
+ui_scrollbar_interaction_system :: proc(
+	world: ^ecs.World,
+	mouse_inp: input.Input(input.MouseButtonCode),
+	gp_inp: input.Input(input.GamepadButton),
+	gp_axis_inp: input.Input(input.GamepadAxis),
+	dt: params.Res(app.DeltaTime),
+	config: params.Res(UI_Input_Config) = {},
+) {
+	click_btn := config.ptr != nil ? config.ptr.mouse_click : input.MouseButtonCode.Left
+
+	is_down := input.is_down(mouse_inp, click_btn)
+	is_pressed := input.is_pressed(mouse_inp, click_btn)
+
+	for arch in ecs.query(world, UI_Node, Scrollbar) {
+		nodes := ecs.arch_get_field(arch, UI_Node)
+		scrollbars := ecs.arch_get_field(arch, Scrollbar)
+		entities := ecs.arch_get_entities(arch)
+
+		for i in 0 ..< len(nodes) {
+			node := &nodes[i]
+			scrollbar := &scrollbars[i]
+			entity := entities[i]
+
+			root_canvas := ui_get_root_canvas(world, entity)
+			mpos := input.mouse_position(mouse_inp, root_canvas)
+
+			in_bounds :=
+				mpos.x >= node.rect.x &&
+				mpos.x <= node.rect.x + node.rect.w &&
+				mpos.y >= node.rect.y &&
+				mpos.y <= node.rect.y + node.rect.h
+
+			scrollbar.is_hovered = in_bounds
+
+			// 1. Mouse Drag
+			if is_pressed && in_bounds {
+				scrollbar.is_pressed = true
+				scrollbar.is_focused = true
+				ui_mark_dirty(world, entity)
+			}
+			if is_pressed && !in_bounds {
+				if scrollbar.is_focused {
+					scrollbar.is_focused = false
+					ui_mark_dirty(world, entity)
+				}
+			}
+
+			if scrollbar.is_pressed {
+				if is_down {
+					prev_val := scrollbar.value
+					knob_sz := clamp(scrollbar.knob_size, 0.1, 1.0)
+					if scrollbar.vertical {
+						local_y := mpos.y - node.rect.y
+						knob_h := node.rect.h * knob_sz
+						max_travel := node.rect.h - knob_h
+						if max_travel > 0.0 {
+							scrollbar.value = clamp((local_y - knob_h / 2.0) / max_travel, 0.0, 1.0)
+						}
+					} else {
+						local_x := mpos.x - node.rect.x
+						knob_w := node.rect.w * knob_sz
+						max_travel := node.rect.w - knob_w
+						if max_travel > 0.0 {
+							scrollbar.value = clamp((local_x - knob_w / 2.0) / max_travel, 0.0, 1.0)
+						}
+					}
+					if scrollbar.value != prev_val {
+						ui_mark_dirty(world, entity)
+					}
+				} else {
+					scrollbar.is_pressed = false
+					ui_mark_dirty(world, entity)
+				}
+			}
+
+			// 2. Gamepad Input (dpad & stick Y/X) if focused
+			if scrollbar.is_focused {
+				speed: f32 = 1.0 * (dt.ptr != nil ? dt.ptr.f32_seconds : 1.0 / 60.0)
+				change: f32 = 0.0
+
+				if scrollbar.vertical {
+					if input.is_down(gp_inp, input.GamepadButton.DpadUp) {
+						change = -speed
+					} else if input.is_down(gp_inp, input.GamepadButton.DpadDown) {
+						change = speed
+					} else if gp_axis_inp.state != nil {
+						stick_val := input.gamepad_axis(gp_axis_inp, input.GamepadAxis.LeftY)
+						if abs(stick_val) > 0.15 {
+							change = stick_val * speed
+						}
+					}
+				} else {
+					if input.is_down(gp_inp, input.GamepadButton.DpadLeft) {
+						change = -speed
+					} else if input.is_down(gp_inp, input.GamepadButton.DpadRight) {
+						change = speed
+					} else if gp_axis_inp.state != nil {
+						stick_val := input.gamepad_axis(gp_axis_inp, input.GamepadAxis.LeftX)
+						if abs(stick_val) > 0.15 {
+							change = stick_val * speed
+						}
+					}
+				}
+
+				if change != 0.0 {
+					scrollbar.value = clamp(scrollbar.value + change, 0.0, 1.0)
+					ui_mark_dirty(world, entity)
+				}
+			}
+		}
+	}
+}
+

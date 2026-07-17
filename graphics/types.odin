@@ -133,6 +133,8 @@ Batch2D :: struct {
 	ind_buf_cap:     int, // Current capacity in bytes of index_buf.
 	shader_passes:   [dynamic]Shader_Pass, // Registered custom shader passes.
 	active_pass_idx: int, // Index of the active custom pass. -1 uses default.
+	clip_rect:       [4]f32, // Clip rectangle: x, y, w, h
+	clip_enabled:    bool, // Whether clipping is enabled
 }
 
 // Batch3D manages dynamic batches of 3D lines/triangles, uploading them to GPU buffers.

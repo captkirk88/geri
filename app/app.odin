@@ -3,6 +3,7 @@ package app
 import ecs "../ecs"
 import sys "../ecs/systems"
 import errors "../errors"
+import log "../logging"
 import "base:intrinsics"
 import "core:strings"
 import "core:sync"
@@ -46,7 +47,10 @@ Render: Schedule_Label : "Render"
 PostRender: Schedule_Label : "PostRender"
 
 // Initializes a new App instance, setting up its ECS world, default schedules, default thread count (4), and running any provided plugins.
-app_init :: proc(plugins: []Plugin = nil, allocator := context.allocator) -> errors.Result(App, errors.Error) {
+app_init :: proc(
+	plugins: []Plugin = nil,
+	allocator := context.allocator,
+) -> errors.Result(App, errors.Error) {
 	app: App
 	app.world = ecs.new_world(allocator)
 	sys.world_init_default_params(&app.world)

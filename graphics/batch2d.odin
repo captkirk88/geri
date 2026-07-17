@@ -326,3 +326,52 @@ batch2d_add_shader_pass :: proc(batch: ^Batch2D, pass: Shader_Pass) -> int {
 batch2d_set_active_pass :: proc(batch: ^Batch2D, pass_idx: int) {
 	batch.active_pass_idx = pass_idx
 }
+
+// batch2d_set_clip_rect sets the clipping boundaries of the 2D batch, intersecting with the previous clip rect if clipping was already enabled.
+batch2d_set_clip_rect :: proc(batch: ^Batch2D, rect: [4]f32) {
+	if batch.clip_enabled {
+		cx0 := max(batch.clip_rect[0], rect[0])
+		cy0 := max(batch.clip_rect[1], rect[1])
+		cx1 := min(batch.clip_rect[0] + batch.clip_rect[2], rect[0] + rect[2])
+		cy1 := min(batch.clip_rect[1] + batch.clip_rect[3], rect[1] + rect[3])
+		cw := max(cx1 - cx0, 0.0)
+		ch := max(cy1 - cy0, 0.0)
+		batch.clip_rect = {cx0, cy0, cw, ch}
+		batch.clip_enabled = cw > 0.0 && ch > 0.0
+	} else {
+		batch.clip_rect = rect
+		batch.clip_enabled = rect[2] > 0.0 && rect[3] > 0.0
+	}
+}
+
+// batch2d_disable_clip disables clipping on the 2D batch.
+batch2d_disable_clip :: proc(batch: ^Batch2D) {
+	batch.clip_enabled = false
+}
+
+// batch2d_clip_quad clips a quad's 2D coordinate bounds to the active clip rectangle on the CPU.
+// Returns false if the quad is completely discarded/outside the clip area.
+batch2d_clip_quad :: proc(batch: ^Batch2D, x0, y0, x1, y1: ^f32) -> bool {
+	if !batch.clip_enabled do return true
+
+	cx0 := batch.clip_rect[0]
+	cy0 := batch.clip_rect[1]
+	cx1 := batch.clip_rect[0] + batch.clip_rect[2]
+	cy1 := batch.clip_rect[1] + batch.clip_rect[3]
+
+	qmin_x := min(x0^, x1^)
+	qmax_x := max(x0^, x1^)
+	qmin_y := min(y0^, y1^)
+	qmax_y := max(y0^, y1^)
+
+	if qmax_x < cx0 || qmin_x > cx1 || qmax_y < cy0 || qmin_y > cy1 {
+		return false
+	}
+
+	x0^ = clamp(x0^, cx0, cx1)
+	x1^ = clamp(x1^, cx0, cx1)
+	y0^ = clamp(y0^, cy0, cy1)
+	y1^ = clamp(y1^, cy0, cy1)
+
+	return abs(x1^ - x0^) > 0.0001 && abs(y1^ - y0^) > 0.0001
+}

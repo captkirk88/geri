@@ -54,3 +54,11 @@ mise test-render
 ### License
 
 Source code is under MIT. See [LICENSE](LICENSE) for details.
+
+The following files are released under the CC0 1.0 Universal by me, the owner of this repo.
+
+blob.attack.gif
+
+blob.idle.gif
+
+blob.walk.gif

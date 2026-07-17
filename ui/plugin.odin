@@ -33,6 +33,7 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, 
 	app.app_add_system(a, app.Update, ui_layout_system)
 	app.app_add_system(a, app.Update, ui_button_interaction_system)
 	app.app_add_system(a, app.Update, ui_slider_interaction_system)
+	app.app_add_system(a, app.Update, ui_scrollbar_interaction_system)
 	app.app_add_system(a, app.Update, ui_checkbox_interaction_system)
 	app.app_add_system(a, app.Update, ui_toggle_interaction_system)
 	app.app_add_system(a, app.Update, ui_radio_button_interaction_system)

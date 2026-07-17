@@ -1,14 +1,17 @@
 package graphics
 
 import "../app"
+import asset "../asset"
 import camera "../camera"
 import "../ecs"
 import "../ecs/params"
 import errors "../errors"
 import log "../logging"
 import "../windowing"
+import "./components"
 import "base:runtime"
 import "core:fmt"
+import "core:image"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
 
@@ -54,7 +57,10 @@ _on_device :: proc "c" (
 render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, ok: bool) {
 	window_ctx := ecs.world_get_resource(&a.world, windowing.Window_Context)
 	if window_ctx == nil || window_ctx.window == nil {
-		return errors.new("Render_Plugin requires Window_Context to be initialized first. Did you forget to add Window_Plugin?"), false
+		return errors.new(
+				"Render_Plugin requires Window_Context to be initialized first. Did you forget to add Window_Plugin?",
+			),
+			false
 	}
 
 	instance_extras := wgpu.InstanceExtras {
@@ -149,6 +155,105 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 	app.app_add_resource(a, batch2d)
 	batch3d := init_batch3d(req_data.device, config.format)
 	app.app_add_resource(a, batch3d)
+
+	// Set up Asset Loaders if AssetServer exists
+	server := ecs.world_get_resource(&a.world, asset.AssetServer)
+	if server != nil {
+		global_asset_server = server
+
+		// 1. Image Loader
+		img_mgr: asset.AssetManager(image.Image)
+		asset.asset_manager_init(
+			&img_mgr,
+			asset.AssetLoader{load = image_loader_proc, destroy = image_destroy_proc},
+			context.allocator,
+		)
+
+		ecs.world_add_resource(
+			&a.world,
+			img_mgr,
+			proc(m: ^asset.AssetManager(image.Image), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+
+		img_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(image.Image))
+		asset.asset_server_register(server, img_mgr_ptr)
+		asset.asset_server_register_extension(
+			server,
+			".gif",
+			typeid_of(components.SpriteAnimation),
+		)
+		asset.asset_server_register_extension(server, ".png", typeid_of(image.Image))
+		asset.asset_server_register_extension(server, ".jpg", typeid_of(image.Image))
+		asset.asset_server_register_extension(server, ".jpeg", typeid_of(image.Image))
+
+		// 2. SpriteAnimation Loader
+		anim_mgr: asset.AssetManager(components.SpriteAnimation)
+		asset.asset_manager_init(
+			&anim_mgr,
+			asset.AssetLoader {
+				load = sprite_animation_loader_proc,
+				destroy = sprite_animation_destroy_proc,
+			},
+			context.allocator,
+		)
+
+		ecs.world_add_resource_with_destroy(
+			&a.world,
+			anim_mgr,
+			proc(m: ^asset.AssetManager(components.SpriteAnimation), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+
+		anim_mgr_ptr := ecs.world_get_resource(
+			&a.world,
+			asset.AssetManager(components.SpriteAnimation),
+		)
+		asset.asset_server_register(server, anim_mgr_ptr)
+
+		gltf_mgr: asset.AssetManager(asset.Gltf_Data)
+		asset.asset_manager_init(&gltf_mgr, asset.GLTF_LOADER, a.world.allocator)
+		ecs.world_add_resource(
+			&a.world,
+			gltf_mgr,
+			proc(m: ^asset.AssetManager(asset.Gltf_Data), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+		gltf_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(asset.Gltf_Data))
+		asset.asset_server_register(server, gltf_mgr_ptr)
+		asset.asset_server_register_extension(server, ".gltf", typeid_of(asset.Gltf_Data))
+
+		// Register Obj manager on the fly
+		obj_mgr: asset.AssetManager(asset.Obj_Mesh)
+		asset.asset_manager_init(&obj_mgr, asset.OBJ_LOADER, a.world.allocator)
+		ecs.world_add_resource(
+			&a.world,
+			obj_mgr,
+			proc(m: ^asset.AssetManager(asset.Obj_Mesh), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+		obj_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(asset.Obj_Mesh))
+		asset.asset_server_register(server, obj_mgr_ptr)
+		asset.asset_server_register_extension(server, ".obj", typeid_of(asset.Obj_Mesh))
+
+		// Register Material manager on the fly
+		mtl_mgr: asset.AssetManager(asset.Materials)
+		asset.asset_manager_init(&mtl_mgr, asset.MATERIAL_LOADER, a.world.allocator)
+		ecs.world_add_resource(
+			&a.world,
+			mtl_mgr,
+			proc(m: ^asset.AssetManager(asset.Materials), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+		mtl_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(asset.Materials))
+		asset.asset_server_register(server, mtl_mgr_ptr)
+		asset.asset_server_register_extension(server, ".mtl", typeid_of(asset.Materials))
+	}
 
 	app.app_add_system(a, app.PreUpdate, camera.auto_transform_system)
 	app.app_add_system(a, app.PreRender, frame_start_system)

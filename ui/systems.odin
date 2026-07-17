@@ -15,7 +15,7 @@ import "core:math/linalg"
 import "vendor:sdl3"
 import "vendor:wgpu"
 
-// Helper function to get children pointing to parent via ChildOf relation
+// Helper function to get children pointing to parent via UI_ChildOf relation
 ui_get_children :: proc(
 	w: ^ecs.World,
 	parent: ecs.Entity,
@@ -26,7 +26,7 @@ ui_get_children :: proc(
 	children := make([dynamic]ecs.Entity, allocator)
 	for link in links {
 		if info, found := w.filter_registry[link.pair_id]; found {
-			if info.relation == typeid_of(ecs.ChildOf) {
+			if info.relation == typeid_of(UI_ChildOf) {
 				append(&children, link.source)
 			}
 		}
@@ -34,7 +34,7 @@ ui_get_children :: proc(
 	return children[:]
 }
 
-// Helper function to check if an entity has a parent ChildOf relationship
+// Helper function to check if an entity has a parent UI_ChildOf relationship
 ui_has_parent :: proc(w: ^ecs.World, entity: ecs.Entity) -> bool {
 	comps, ok := ecs.world_get_all_components(w, entity, context.temp_allocator)
 	if !ok do return false
@@ -42,7 +42,7 @@ ui_has_parent :: proc(w: ^ecs.World, entity: ecs.Entity) -> bool {
 	for c in comps {
 		if ecs.is_pair(c.id) {
 			if info, found := w.filter_registry[c.id]; found {
-				if info.relation == typeid_of(ecs.ChildOf) {
+				if info.relation == typeid_of(UI_ChildOf) {
 					return true
 				}
 			}
@@ -70,9 +70,9 @@ ui_observer_init :: proc(w: ^ecs.World) {
 	ecs.observe(w, ecs.on_add(Layout_Flex), ui_mark_dirty)
 	ecs.observe(w, ecs.on_add(Layout_Grid), ui_mark_dirty)
 	ecs.observe(w, ecs.on_add(Layout_Anchor), ui_mark_dirty)
-	ecs.observe(w, ecs.on_add(ecs.ChildOf), ui_mark_dirty)
+	ecs.observe(w, ecs.on_add(UI_ChildOf), ui_mark_dirty)
 
-	ecs.observe(w, ecs.on_remove(ecs.ChildOf), ui_cascade_despawn)
+	ecs.observe(w, ecs.on_remove(UI_ChildOf), ui_cascade_despawn)
 
 	ecs.observe(w, ecs.on_add(UI_Canvas_Target), ui_canvas_target_init_observer)
 	ecs.observe(w, ecs.on_remove(UI_Canvas_Target), ui_canvas_target_destroy_observer)
@@ -574,6 +574,8 @@ ui_render_node :: proc(
 			switch c.id {
 			case Label:
 				ui_render_label(w, entity, node, (^Label)(c.data), batch, vp, style)
+			case Scrollbar:
+				ui_render_scrollbar(w, entity, node, (^Scrollbar)(c.data), batch, vp, style)
 			case Checkbox:
 				ui_render_checkbox(w, entity, node, (^Checkbox)(c.data), batch, vp, style)
 			case Slider:
@@ -590,11 +592,22 @@ ui_render_node :: proc(
 		}
 	}
 
+	// If this node clips its children, set the clip rect on the batch
+	old_clip_enabled := batch.clip_enabled
+	old_clip_rect := batch.clip_rect
+	if node.clip_children {
+		graphics.batch2d_set_clip_rect(batch, {node.rect.x, node.rect.y, node.rect.w, node.rect.h})
+	}
+
 	children := ui_get_children(w, entity)
 
 	for child in children {
 		ui_render_node(w, child, batch, vp)
 	}
+
+	// Restore previous clip state
+	batch.clip_enabled = old_clip_enabled
+	batch.clip_rect = old_clip_rect
 }
 
 @(tag = "system")
@@ -701,7 +714,7 @@ ui_get_parent :: proc(w: ^ecs.World, entity: ecs.Entity) -> ecs.Entity {
 	for c in comps {
 		if ecs.is_pair(c.id) {
 			if info, found := w.filter_registry[c.id]; found {
-				if info.relation == typeid_of(ecs.ChildOf) {
+				if info.relation == typeid_of(UI_ChildOf) {
 					return info.target
 				}
 			}

@@ -8,6 +8,7 @@ import "ecs/params"
 import "ecs/systems"
 import "errors"
 import "graphics"
+import "graphics/components"
 import "logging"
 import "plugins"
 import "reflect"
@@ -103,4 +104,39 @@ test_assets_param :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, iterated_count, 1)
 	testing.expect_value(t, iterated_content, "Hello Geri Systems!")
+}
+
+import "core:image"
+
+@(test)
+test_gif_loading :: proc(t: ^testing.T) {
+	server: asset.AssetServer
+	asset.asset_server_init(&server)
+	defer asset.asset_server_destroy(&server)
+
+	img_mgr: asset.AssetManager(image.Image)
+	asset.asset_manager_init(&img_mgr, asset.AssetLoader{
+		load = graphics.image_loader_proc,
+		destroy = graphics.image_destroy_proc,
+	})
+	asset.asset_server_register(&server, &img_mgr)
+
+	anim_mgr: asset.AssetManager(components.SpriteAnimation)
+	asset.asset_manager_init(&anim_mgr, asset.AssetLoader{
+		load = graphics.sprite_animation_loader_proc,
+		destroy = graphics.sprite_animation_destroy_proc,
+	})
+	asset.asset_server_register(&server, &anim_mgr)
+
+	graphics.global_asset_server = &server
+
+	asset.asset_schemas_register(&server.registry, "game", "test_assets/")
+
+	res := asset.asset_server_load(&server, "game://blob.walk.gif", components.SpriteAnimation)
+	testing.expect(t, errors.is_ok(res))
+	if !errors.is_ok(res) {
+		return
+	}
+	anim := errors.unwrap(res)
+	testing.expect(t, len(anim.frames) > 0)
 }

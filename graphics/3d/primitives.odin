@@ -4,6 +4,7 @@ import g ".."
 import "core:math"
 import "core:math/linalg"
 import "core:testing"
+import "core:fmt"
 import "vendor:cgltf"
 import asset "../../asset"
 
@@ -513,7 +514,10 @@ draw_gltf_model :: proc(
 
 			// Unpack positions using cgltf
 			pos_buffer := make([]f32, count * 3, context.temp_allocator)
-			cgltf.accessor_unpack_floats(accessor, raw_data(pos_buffer), uint(len(pos_buffer)))
+			if cgltf.accessor_unpack_floats(accessor, raw_data(pos_buffer), uint(len(pos_buffer))) != uint(len(pos_buffer)) {
+				acc_name := string(accessor.name) if accessor.name != nil else "unnamed"
+				panic(fmt.tprintf("Failed to unpack GLTF positions for accessor: %s", acc_name))
+			}
 
 			for i in 0..<count {
 				raw_pos := [3]f32{

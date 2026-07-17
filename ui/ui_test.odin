@@ -24,7 +24,7 @@ test_ui_cascading_despawn :: proc(t: ^testing.T) {
 	child := ecs.world_spawn(&w)
 	ecs.world_add_component(&w, child, UI_Node{})
 
-	ecs.world_add_relation(&w, child, ecs.ChildOf, parent)
+	ecs.world_add_relation(&w, child, UI_ChildOf, parent)
 
 	testing.expect(t, ecs.world_is_alive(&w, parent))
 	testing.expect(t, ecs.world_is_alive(&w, child))

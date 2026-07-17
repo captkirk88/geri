@@ -43,6 +43,8 @@ draw_rect :: proc(
 	x1 := position.x + size.x
 	y1 := position.y + size.y
 
+	if !g.batch2d_clip_quad(batch, &x0, &y0, &x1, &y1) do return
+
 	base_idx := u32(len(batch.vertices))
 	append(
 		&batch.vertices,

@@ -2,6 +2,7 @@ package asset
 
 import errors "../errors"
 import "base:runtime"
+import "core:fmt"
 import "core:hash"
 import "core:io"
 import "core:os"
@@ -81,14 +82,15 @@ asset_manager_init :: proc(
 asset_manager_destroy :: proc(mgr: ^AssetManager($T)) {
 	if mgr.assets == nil do return
 	if mgr.loader.destroy != nil {
-		for _, &val in mgr.assets {
+		for id in mgr.assets {
+			val_ptr := &mgr.assets[id]
 			ti := type_info_of(T)
 			_, is_ptr := ti.variant.(runtime.Type_Info_Pointer)
 			if is_ptr {
-				ptr := (^rawptr)(&val)^
+				ptr := (^rawptr)(val_ptr)^
 				mgr.loader.destroy(ptr, mgr.allocator)
 			} else {
-				mgr.loader.destroy(&val, mgr.allocator)
+				mgr.loader.destroy(val_ptr, mgr.allocator)
 			}
 		}
 	}
@@ -153,15 +155,14 @@ asset_schemas_register :: proc(registry: ^AssetSchemaRegistry, scheme: string, b
 	sync.mutex_lock(&registry.mutex)
 	defer sync.mutex_unlock(&registry.mutex)
 
-	// Delete existing if any to avoid leaks
 	if old_base, ok := registry.paths[scheme]; ok {
 		delete(old_base)
-		delete(scheme)
+		registry.paths[scheme] = strings.clone(base_path)
+	} else {
+		s := strings.clone(scheme)
+		b := strings.clone(base_path)
+		registry.paths[s] = b
 	}
-
-	s := strings.clone(scheme)
-	b := strings.clone(base_path)
-	registry.paths[s] = b
 }
 
 asset_schemas_resolve :: proc(
@@ -229,25 +230,29 @@ asset_server_destroy :: proc(server: ^AssetServer) {
 	delete(server.extension_types)
 }
 
-asset_manager_populate_slice :: proc($T: typeid) -> proc(rawptr, rawptr, runtime.Allocator) {
+asset_manager_populate_slice :: proc(
+	$T: typeid,
+) -> (
+	proc(_: rawptr, _: rawptr, _: runtime.Allocator),
+) {
 	return proc(manager_ptr: rawptr, target_slice_ptr: rawptr, allocator: runtime.Allocator) {
-		mgr := (^AssetManager(T))(manager_ptr)
-		sync.mutex_lock(&mgr.mutex)
-		defer sync.mutex_unlock(&mgr.mutex)
+			mgr := (^AssetManager(T))(manager_ptr)
+			sync.mutex_lock(&mgr.mutex)
+			defer sync.mutex_unlock(&mgr.mutex)
 
-		slice := make([]Asset_Entry(T), len(mgr.assets), allocator)
-		i := 0
-		for id, asset in mgr.assets {
-			slice[i] = Asset_Entry(T) {
-				id = AssetId(T){id = id},
-				asset = asset,
+			slice := make([]Asset_Entry(T), len(mgr.assets), allocator)
+			i := 0
+			for id, asset in mgr.assets {
+				slice[i] = Asset_Entry(T) {
+					id = AssetId(T){id = id},
+					asset = asset,
+				}
+				i += 1
 			}
-			i += 1
-		}
 
-		raw_slice := transmute(runtime.Raw_Slice)slice
-		((^runtime.Raw_Slice)(target_slice_ptr))^ = raw_slice
-	}
+			raw_slice := transmute(runtime.Raw_Slice)slice
+			((^runtime.Raw_Slice)(target_slice_ptr))^ = raw_slice
+		}
 }
 
 asset_server_register :: proc(server: ^AssetServer, manager: ^AssetManager($T)) {

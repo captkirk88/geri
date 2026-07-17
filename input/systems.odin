@@ -355,6 +355,49 @@ input_update_system :: proc(
 			state.pinch_scale = ev.pinch.scale
 		case .PINCH_END:
 
+		case .FINGER_DOWN:
+			state.mouse_position = {ev.tfinger.x * ref_w, ev.tfinger.y * ref_h}
+			state.mouse_buttons_pressed[.Left] = true
+			state.mouse_buttons_down[.Left] = true
+			state.gesture_start_pos = state.mouse_position
+			state.gesture_start_time = now
+			state.is_dragging = false
+
+		case .FINGER_UP:
+			state.mouse_position = {ev.tfinger.x * ref_w, ev.tfinger.y * ref_h}
+			state.mouse_buttons_down[.Left] = false
+			state.mouse_buttons_released[.Left] = true
+
+			end_pos := state.mouse_position
+			delta := end_pos - state.gesture_start_pos
+			dist := math.sqrt(delta.x * delta.x + delta.y * delta.y)
+			dur := time.duration_seconds(time.tick_since(state.gesture_start_time))
+
+			if dist < 10.0 && dur < 0.25 {
+				state.gestures_active[.Tap] = true
+				tap_dur := time.duration_seconds(time.tick_since(state.last_tap_time))
+				if tap_dur < 0.3 {
+					state.gestures_active[.DoubleTap] = true
+				}
+				state.last_tap_time = now
+			} else if dist > 50.0 && dur < 0.3 {
+				if math.abs(delta.x) > math.abs(delta.y) {
+					if delta.x > 0 do state.gestures_active[.SwipeRight] = true
+					else do state.gestures_active[.SwipeLeft] = true
+				} else {
+					if delta.y > 0 do state.gestures_active[.SwipeDown] = true
+					else do state.gestures_active[.SwipeUp] = true
+				}
+			}
+			state.is_dragging = false
+
+		case .FINGER_MOTION:
+			state.mouse_position = {ev.tfinger.x * ref_w, ev.tfinger.y * ref_h}
+			state.mouse_delta = {ev.tfinger.dx * ref_w, ev.tfinger.dy * ref_h}
+			state.is_dragging = true
+			state.gestures_active[.Pan] = true
+			state.pan_delta = state.mouse_delta
+
 		case .TEXT_INPUT:
 			if ev.text.text != nil {
 				text_str := string(ev.text.text)

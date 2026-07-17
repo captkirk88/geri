@@ -4,6 +4,9 @@ import "../ecs"
 import graphics "../graphics"
 import input "../input"
 
+// UI-specific parent-child relationship tag to avoid tracking global ecs.ChildOf
+UI_ChildOf :: struct {}
+
 // The unit of measurement for a UI_Size value (pixels, percent, or auto).
 UI_Size_Unit :: enum {
 	// Pixels means the size is specified in absolute pixels.
@@ -31,10 +34,11 @@ UI_Node :: struct {
 	height:       UI_Size,
 	padding:      [4]f32, // top, right, bottom, left
 	margin:       [4]f32, // top, right, bottom, left
-	bg_color:     [4]f32,
-	border_color: [4]f32,
-	border_width: f32,
-	rect:         UI_Rect,
+	bg_color:      [4]f32,
+	border_color:  [4]f32,
+	border_width:  f32,
+	rect:          UI_Rect,
+	clip_children: bool,
 }
 
 Layout_Flex_Direction :: enum {

@@ -49,6 +49,8 @@ Showcase_State :: struct {
 	box_color:      [4]f32,
 }
 
+Scroll_Content_Tag :: struct {}
+
 global_tracker: gmem.Tracker
 
 @(tag = "system")
@@ -90,7 +92,7 @@ setup_system :: proc(commands: params.Commands) {
 			gap = 15.0,
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, flex_panel.entity, ecs.ChildOf, root.entity)
+	ecs.commands_add_relation(commands.ptr, flex_panel.entity, ui.UI_ChildOf, root.entity)
 
 	// Flex children buttons
 	for i in 0 ..< 3 {
@@ -136,7 +138,7 @@ setup_system :: proc(commands: params.Commands) {
 				},
 			},
 		)
-		ecs.commands_add_relation(commands.ptr, btn.entity, ecs.ChildOf, flex_panel.entity)
+		ecs.commands_add_relation(commands.ptr, btn.entity, ui.UI_ChildOf, flex_panel.entity)
 	}
 
 	// 2. GRID PANEL (Middle)
@@ -154,7 +156,7 @@ setup_system :: proc(commands: params.Commands) {
 		},
 		ui.Layout_Grid{columns = 3, rows = 3, column_gap = 10.0, row_gap = 10.0},
 	)
-	ecs.commands_add_relation(commands.ptr, grid_panel.entity, ecs.ChildOf, root.entity)
+	ecs.commands_add_relation(commands.ptr, grid_panel.entity, ui.UI_ChildOf, root.entity)
 	// Store grid panel entity so timer system can despawn it
 	ecs.commands_add_resource_no_destroy(commands.ptr, Grid_Panel_Res{entity = grid_panel.entity})
 	// Spawn 3x3 Grid Cells
@@ -173,7 +175,7 @@ setup_system :: proc(commands: params.Commands) {
 				},
 				Grid_Cell{index = idx},
 			)
-			ecs.commands_add_relation(commands.ptr, cell.entity, ecs.ChildOf, grid_panel.entity)
+			ecs.commands_add_relation(commands.ptr, cell.entity, ui.UI_ChildOf, grid_panel.entity)
 		}
 	}
 
@@ -191,7 +193,7 @@ setup_system :: proc(commands: params.Commands) {
 			border_width = 2.0,
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, anchor_panel.entity, ecs.ChildOf, root.entity)
+	ecs.commands_add_relation(commands.ptr, anchor_panel.entity, ui.UI_ChildOf, root.entity)
 
 	// Spawning an anchored child in the center that can be scaled
 	pinch_box := ecs.commands_spawn(commands.ptr)
@@ -212,41 +214,84 @@ setup_system :: proc(commands: params.Commands) {
 		},
 		Pinchable_Box{base_width = 150.0, base_height = 150.0, scale = 1.0},
 	)
-	ecs.commands_add_relation(commands.ptr, pinch_box.entity, ecs.ChildOf, anchor_panel.entity)
+	ecs.commands_add_relation(commands.ptr, pinch_box.entity, ui.UI_ChildOf, anchor_panel.entity)
 
 	// Spawn Rotating Box UI Canvas
 	box_canvas := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
 		box_canvas,
 		ui.UI_Node {
-			width        = {250.0, .Pixels},
+			width        = {270.0, .Pixels},
 			height       = {250.0, .Pixels},
 			bg_color     = {0.5, 0.15, 0.7, 0.5}, // Initially semi-transparent purple
 			border_color = {0.7, 0.3, 0.9, 1.0},
 			border_width = 2.0,
+			padding      = {10.0, 10.0, 10.0, 10.0},
 		},
 		ui.Layout_Flex {
-			direction = .Column,
-			justify_content = .Center,
-			align_items = .Center,
+			direction = .Row,
+			justify_content = .Space_Between,
+			align_items = .Stretch,
 			gap = 10.0,
 		},
-		ui.UI_Canvas{render_mode = .World_Space, reference_size = {250, 250}},
+		ui.UI_Canvas{render_mode = .World_Space, reference_size = {270, 250}},
 		transform.Transform{world_matrix = linalg.MATRIX4F32_IDENTITY},
 	)
 
-	// Label for slider
+	// Scroll Viewport (fixed size, crops view)
+	scroll_viewport := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		scroll_viewport,
+		ui.UI_Node {
+			width = {210.0, .Pixels},
+			height = {100.0, .Percent},
+			bg_color = {0.1, 0.1, 0.12, 0.4},
+			border_color = {0.2, 0.2, 0.25, 0.8},
+			border_width = 1.0,
+			padding = {5, 5, 5, 5},
+			clip_children = true,
+		},
+		// Viewport has no flex layout to let scroll_content exceed bounds or position relative to top
+	)
+	ecs.commands_add_relation(
+		commands.ptr,
+		scroll_viewport.entity,
+		ui.UI_ChildOf,
+		box_canvas.entity,
+	)
+
+	// Scroll Content (contains the items and moves vertically)
+	scroll_content := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		scroll_content,
+		ui.UI_Node{width = {100.0, .Percent}, height = {350.0, .Pixels}},
+		ui.Layout_Flex {
+			direction = .Column,
+			justify_content = .Start,
+			align_items = .Center,
+			gap = 10.0,
+		},
+		Scroll_Content_Tag{},
+	)
+	ecs.commands_add_relation(
+		commands.ptr,
+		scroll_content.entity,
+		ui.UI_ChildOf,
+		scroll_viewport.entity,
+	)
+
+	// Label for slider (demonstrating elision)
 	lbl := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
 		lbl,
-		ui.UI_Node {
-			width   = {100.0, .Percent},
-			height  = {30.0, .Pixels},
-			padding = {0, 0, 0, 35}, // Indent to align nicely
+		ui.UI_Node{width = {180.0, .Pixels}, height = {30.0, .Pixels}, padding = {0, 5, 0, 5}},
+		ui.Label {
+			text = "[c=white][b]Box Color Slider Label Overflow[/b][/c]",
+			color = {1.0, 1.0, 1.0, 1.0},
+			multiline = false,
 		},
-		ui.Label{text = "[c=white][b]Box Color[/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
 	)
-	ecs.commands_add_relation(commands.ptr, lbl.entity, ecs.ChildOf, box_canvas.entity)
+	ecs.commands_add_relation(commands.ptr, lbl.entity, ui.UI_ChildOf, scroll_content.entity)
 
 	// Color slider
 	sld := ecs.commands_spawn(commands.ptr)
@@ -265,27 +310,92 @@ setup_system :: proc(commands: params.Commands) {
 			knob_color = {1.0, 1.0, 1.0, 1.0},
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, sld.entity, ecs.ChildOf, box_canvas.entity)
+	ecs.commands_add_relation(commands.ptr, sld.entity, ui.UI_ChildOf, scroll_content.entity)
+
+	// Wrapped Multi-line label
+	lbl_wrapped := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		lbl_wrapped,
+		ui.UI_Node{width = {180.0, .Pixels}, height = {45.0, .Pixels}, padding = {2, 2, 2, 2}},
+		ui.Label {
+			text = "[c=cyan]This text wraps inside the box bounds.[/c]",
+			color = {1.0, 1.0, 1.0, 1.0},
+			multiline = true,
+		},
+	)
+	ecs.commands_add_relation(
+		commands.ptr,
+		lbl_wrapped.entity,
+		ui.UI_ChildOf,
+		scroll_content.entity,
+	)
 
 	// Text Input
 	txt := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
 		txt,
 		ui.UI_Node {
-			width        = {180.0, .Pixels},
-			height       = {30.0, .Pixels},
-			padding      = {5.0, 5.0, 5.0, 5.0},
-			bg_color     = {0.1, 0.1, 0.1, 1.0},
+			width = {180.0, .Pixels},
+			height = {30.0, .Pixels},
+			padding = {5.0, 5.0, 5.0, 5.0},
+			bg_color = {0.1, 0.1, 0.1, 1.0},
 			border_color = {0.4, 0.4, 0.4, 1.0},
 			border_width = 1.0,
 		},
-		ui.TextInput {
-			text       = make([dynamic]u8, context.allocator),
-			max_length = 16,
+		ui.TextInput{text = make([dynamic]u8, context.allocator), max_length = 16},
+	)
+	ecs.commands_add_relation(commands.ptr, txt.entity, ui.UI_ChildOf, scroll_content.entity)
+
+	// Extra Label for scrolling
+	lbl_extra := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		lbl_extra,
+		ui.UI_Node{width = {180.0, .Pixels}, height = {30.0, .Pixels}},
+		ui.Label{text = "[c=orange][b]Hidden Content![/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
+	)
+	ecs.commands_add_relation(commands.ptr, lbl_extra.entity, ui.UI_ChildOf, scroll_content.entity)
+
+	// Extra TextInput
+	txt2 := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		txt2,
+		ui.UI_Node {
+			width = {180.0, .Pixels},
+			height = {30.0, .Pixels},
+			padding = {5.0, 5.0, 5.0, 5.0},
+			bg_color = {0.1, 0.1, 0.1, 1.0},
+			border_color = {0.4, 0.4, 0.4, 1.0},
+			border_width = 1.0,
+		},
+		ui.TextInput{text = make([dynamic]u8, context.allocator), max_length = 16},
+	)
+	ecs.commands_add_relation(commands.ptr, txt2.entity, ui.UI_ChildOf, scroll_content.entity)
+
+	// Vertical Scrollbar (positioned on the right side of the canvas)
+	scroller := ecs.commands_spawn(commands.ptr)
+	ecs.entity_commands_add_components(
+		scroller,
+		ui.UI_Node {
+			width = {20.0, .Pixels},
+			height = {100.0, .Percent},
+			bg_color = {0.15, 0.15, 0.2, 1.0},
+			border_color = {0.3, 0.3, 0.4, 1.0},
+			border_width = 1.0,
+		},
+		ui.Scrollbar {
+			value = 0.5,
+			knob_size = 0.4,
+			active_color = {0.15, 0.15, 0.2, 1.0},
+			knob_color = {0.8, 0.5, 0.2, 1.0},
+			vertical = true,
+		},
+		ui.UI_Style {
+			normal = {bg_color = {0.15, 0.15, 0.2, 1.0}, border_color = {0.8, 0.5, 0.2, 1.0}},
+			hover = {bg_color = {0.2, 0.2, 0.25, 1.0}, border_color = {1.0, 0.6, 0.3, 1.0}},
+			active = {bg_color = {0.3, 0.3, 0.35, 1.0}, border_color = {1.0, 0.8, 0.4, 1.0}},
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, txt.entity, ecs.ChildOf, box_canvas.entity)
-
+	ecs.commands_add_relation(commands.ptr, scroller.entity, ui.UI_ChildOf, box_canvas.entity)
 
 	// Add showcase state resource
 	ecs.commands_add_resource(
@@ -465,7 +575,7 @@ rotating_box_system :: proc(
 	cx := ref_w * 0.5
 	cy := ref_h * 0.5
 
-	box_w: f32 = 250.0
+	box_w: f32 = 270.0
 	box_h: f32 = 250.0
 	angle := elapsed * 1.0
 
@@ -543,6 +653,37 @@ rotating_box_system :: proc(
 	box_node := ecs.world_get_component(world, box_canvas_ent, ui.UI_Node)
 	if box_node != nil {
 		box_node.bg_color = state.box_color
+	}
+
+	// 4. Update scroll content y-offset based on scrollbar value (dynamically queried to avoid deferred entity generation mismatch)
+	scroller_comp: ^ui.Scrollbar
+	for arch in ecs.query(world, ui.Scrollbar) {
+		scrollbars := ecs.arch_get_field(arch, ui.Scrollbar)
+		if len(scrollbars) > 0 {
+			scroller_comp = &scrollbars[0]
+			break
+		}
+	}
+
+	scroll_node: ^ui.UI_Node
+	scroll_content_ent: ecs.Entity
+	for arch in ecs.query(world, ui.UI_Node, Scroll_Content_Tag) {
+		nodes := ecs.arch_get_field(arch, ui.UI_Node)
+		entities := ecs.arch_get_entities(arch)
+		if len(nodes) > 0 {
+			scroll_node = &nodes[0]
+			scroll_content_ent = entities[0]
+			break
+		}
+	}
+
+	if scroller_comp != nil && scroll_node != nil {
+		max_scroll: f32 = 350.0 - 210.0 // scroll_content height is 350.0 now
+		new_margin_top := -scroller_comp.value * max_scroll
+		if scroll_node.margin[0] != new_margin_top {
+			scroll_node.margin[0] = new_margin_top
+			ui.ui_mark_dirty(world, scroll_content_ent)
+		}
 	}
 }
 

@@ -326,7 +326,7 @@ setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.
 			color = {1.0, 1.0, 1.0, 1.0},
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, title.entity, ecs.ChildOf, canvas.entity)
+	ecs.commands_add_relation(commands.ptr, title.entity, ui.UI_ChildOf, canvas.entity)
 
 	button := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
@@ -362,7 +362,7 @@ setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.
 		},
 		ui.Label{text = "[b]Clickable Through Sphere[/b]", color = {1.0, 1.0, 1.0, 1.0}},
 	)
-	ecs.commands_add_relation(commands.ptr, button.entity, ecs.ChildOf, canvas.entity)
+	ecs.commands_add_relation(commands.ptr, button.entity, ui.UI_ChildOf, canvas.entity)
 
 	slider := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
@@ -380,7 +380,7 @@ setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.
 			knob_color = {0.98, 0.95, 0.9, 1.0},
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, slider.entity, ecs.ChildOf, canvas.entity)
+	ecs.commands_add_relation(commands.ptr, slider.entity, ui.UI_ChildOf, canvas.entity)
 
 	spacer := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
@@ -391,7 +391,7 @@ setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.
 			bg_color = {0.0, 0.0, 0.0, 0.0},
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, spacer.entity, ecs.ChildOf, canvas.entity)
+	ecs.commands_add_relation(commands.ptr, spacer.entity, ui.UI_ChildOf, canvas.entity)
 
 	hint := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
@@ -409,7 +409,7 @@ setup_system :: proc(commands: params.Commands, render_ctx: params.Res(graphics.
 			color = {0.88, 0.92, 0.97, 1.0},
 		},
 	)
-	ecs.commands_add_relation(commands.ptr, hint.entity, ecs.ChildOf, canvas.entity)
+	ecs.commands_add_relation(commands.ptr, hint.entity, ui.UI_ChildOf, canvas.entity)
 
 	renderer, renderer_ok := build_sphere_ui_renderer(render_ctx.ptr, target)
 	if !renderer_ok {

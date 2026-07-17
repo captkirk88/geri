@@ -1,6 +1,7 @@
 package ecs
 
 import "base:runtime"
+import "core:fmt"
 import "core:hash"
 import "core:mem"
 import "core:slice"
@@ -156,6 +157,20 @@ world_destroy :: proc(w: ^World) {
 		delete(cast([]^Archetype)iter, w.allocator)
 	}
 	delete(w.query_cache)
+}
+
+// Despawns all alive entities
+world_clear :: proc(w: ^World) {
+	for i in 0 ..< len(w.entities) {
+		meta := w.entities[i]
+		ent := Entity {
+			id  = u64(i),
+			gen = u64(meta.gen),
+		}
+		if world_is_alive(w, ent) {
+			world_despawn(w, ent)
+		}
+	}
 }
 
 world_register_param_builder :: proc(w: ^World, builder: System_Param_Builder) {
