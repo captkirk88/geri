@@ -39,3 +39,64 @@ VIRTUAL_BIT :: uintptr(0)
 ChildOf :: struct {}
 DependsOn :: struct {}
 InstanceOf :: struct {}
+
+relations_get_children :: proc(
+	w: ^World,
+	parent: Entity,
+	relation_type: typeid,
+	allocator := context.temp_allocator,
+) -> []Entity {
+	links, ok := w.target_index[parent]
+	if !ok do return nil
+	children := make([dynamic]Entity, allocator)
+	for link in links {
+		if info, found := w.filter_registry[link.pair_id]; found {
+			if info.relation == relation_type {
+				append(&children, link.source)
+			}
+		}
+	}
+	return children[:]
+}
+
+relations_has_parent :: proc(w: ^World, entity: Entity, relation_type: typeid) -> bool {
+	comps, ok := world_get_all_components(w, entity, context.temp_allocator)
+	if !ok do return false
+	defer delete(comps, context.temp_allocator)
+	for c in comps {
+		if is_pair(c.id) {
+			if info, found := w.filter_registry[c.id]; found {
+				if info.relation == relation_type {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+relations_get_parent :: proc(w: ^World, entity: Entity, relation_type: typeid) -> Entity {
+	comps, ok := world_get_all_components(w, entity, context.temp_allocator)
+	if !ok do return {}
+	defer delete(comps, context.temp_allocator)
+	for c in comps {
+		if is_pair(c.id) {
+			if info, found := w.filter_registry[c.id]; found {
+				if info.relation == relation_type {
+					return info.target
+				}
+			}
+		}
+	}
+	return {}
+}
+
+relations_get_root :: proc(w: ^World, e: Entity, relation_type: typeid) -> Entity {
+	curr := e
+	for {
+		parent := relations_get_parent(w, curr, relation_type)
+		if parent == {} do break
+		curr = parent
+	}
+	return curr
+}

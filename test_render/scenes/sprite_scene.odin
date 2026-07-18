@@ -32,15 +32,13 @@ sprite_setup :: proc(world: ^ecs.World) {
 	asset.asset_schemas_register(&server.registry, "game", "test_assets/")
 
 	// Load animations
-	walk_res := asset.asset_server_load(server, "game://blob.walk.gif", components.SpriteAnimation)
-	walk_anim := errors.unwrap(walk_res)
-
-	attack_res := asset.asset_server_load(
-		server,
-		"game://blob.attack.gif",
-		components.SpriteAnimation,
+	walk_anim := errors.unwrap(
+		asset.asset_server_load(server, "game://blob.walk.gif", components.SpriteAnimation),
 	)
-	attack_anim := errors.unwrap(attack_res)
+
+	attack_anim := errors.unwrap(
+		asset.asset_server_load(server, "game://blob.attack.gif", components.SpriteAnimation),
+	)
 
 	// Resolve the asset IDs of the loaded animations
 	_, walk_id_untyped, _ := asset.asset_schemas_resolve(&server.registry, "game://blob.walk.gif")

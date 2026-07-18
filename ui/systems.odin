@@ -1,7 +1,7 @@
 package ui
 
-import camera "../camera"
 import "../app"
+import camera "../camera"
 import "../ecs"
 import "../ecs/params"
 import graphics "../graphics"
@@ -15,41 +15,6 @@ import "core:math/linalg"
 import "vendor:sdl3"
 import "vendor:wgpu"
 
-// Helper function to get children pointing to parent via UI_ChildOf relation
-ui_get_children :: proc(
-	w: ^ecs.World,
-	parent: ecs.Entity,
-	allocator := context.temp_allocator,
-) -> []ecs.Entity {
-	links, ok := w.target_index[parent]
-	if !ok do return nil
-	children := make([dynamic]ecs.Entity, allocator)
-	for link in links {
-		if info, found := w.filter_registry[link.pair_id]; found {
-			if info.relation == typeid_of(UI_ChildOf) {
-				append(&children, link.source)
-			}
-		}
-	}
-	return children[:]
-}
-
-// Helper function to check if an entity has a parent UI_ChildOf relationship
-ui_has_parent :: proc(w: ^ecs.World, entity: ecs.Entity) -> bool {
-	comps, ok := ecs.world_get_all_components(w, entity, context.temp_allocator)
-	if !ok do return false
-	defer delete(comps, context.temp_allocator)
-	for c in comps {
-		if ecs.is_pair(c.id) {
-			if info, found := w.filter_registry[c.id]; found {
-				if info.relation == typeid_of(UI_ChildOf) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
 
 ui_mark_dirty :: proc(w: ^ecs.World, e: ecs.Entity) {
 	state := ecs.world_get_resource(w, UI_State)
@@ -364,7 +329,7 @@ ui_compute_children_layout :: proc(w: ^ecs.World, entity: ecs.Entity, node: ^UI_
 	if ch < 0 do ch = 0
 	content_rect := UI_Rect{cx, cy, cw, ch}
 
-	children := ui_get_children(w, entity)
+	children := ecs.relations_get_children(w, entity, UI_ChildOf)
 
 	flex := ecs.world_get_component(w, entity, Layout_Flex)
 	grid := ecs.world_get_component(w, entity, Layout_Grid)
@@ -442,7 +407,7 @@ ui_layout_system :: proc(
 	for arch in ecs.query(world, UI_Node) {
 		entities := ecs.arch_get_entities(arch)
 		for e in entities {
-			if !ui_has_parent(world, e) {
+			if !ecs.relations_has_parent(world, e, UI_ChildOf) {
 				rect := parent_rect
 
 				canvas := ecs.world_get_component(world, e, UI_Canvas)
@@ -514,13 +479,7 @@ ui_render_node_background_and_border :: proc(
 
 	// Draw background
 	if bg_color.a > 0.0 {
-		twoD.draw_rect(
-			batch,
-			{node.rect.x, node.rect.y},
-			{node.rect.w, node.rect.h},
-			bg_color,
-			vp,
-		)
+		twoD.draw_rect(batch, {node.rect.x, node.rect.y}, {node.rect.w, node.rect.h}, bg_color, vp)
 	}
 	// Draw border
 	if border_width > 0.0 && border_color.a > 0.0 {
@@ -599,7 +558,7 @@ ui_render_node :: proc(
 		graphics.batch2d_set_clip_rect(batch, {node.rect.x, node.rect.y, node.rect.w, node.rect.h})
 	}
 
-	children := ui_get_children(w, entity)
+	children := ecs.relations_get_children(w, entity, UI_ChildOf)
 
 	for child in children {
 		ui_render_node(w, child, batch, vp)
@@ -630,7 +589,7 @@ ui_render_system :: proc(
 	for arch in ecs.query(world, UI_Node) {
 		entities := ecs.arch_get_entities(arch)
 		for e in entities {
-			if !ui_has_parent(world, e) {
+			if !ecs.relations_has_parent(world, e, UI_ChildOf) {
 				target := ecs.world_get_component(world, e, UI_Canvas_Target)
 				if target != nil {
 					// 1. Offscreen Render Target UI Canvas
@@ -706,30 +665,3 @@ ui_render_system :: proc(
 		}
 	}
 }
-
-ui_get_parent :: proc(w: ^ecs.World, entity: ecs.Entity) -> ecs.Entity {
-	comps, ok := ecs.world_get_all_components(w, entity, context.temp_allocator)
-	if !ok do return {}
-	defer delete(comps, context.temp_allocator)
-	for c in comps {
-		if ecs.is_pair(c.id) {
-			if info, found := w.filter_registry[c.id]; found {
-				if info.relation == typeid_of(UI_ChildOf) {
-					return info.target
-				}
-			}
-		}
-	}
-	return {}
-}
-
-ui_get_root_canvas :: proc(w: ^ecs.World, e: ecs.Entity) -> ecs.Entity {
-	curr := e
-	for {
-		parent := ui_get_parent(w, curr)
-		if parent == {} do break
-		curr = parent
-	}
-	return curr
-}
-

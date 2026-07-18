@@ -218,6 +218,7 @@ world_despawn :: proc(w: ^World, entity: Entity) {
 
 	record := w.entities.record[id]
 	arch := record.arch
+	if arch == nil do return
 
 	// 1. Cleanup where this entity is the TARGET
 	if links, ok := w.target_index[entity]; ok {
@@ -239,10 +240,10 @@ world_despawn :: proc(w: ^World, entity: Entity) {
 			trigger_lifecycle(w, .OnRemove, c.id, entity)
 			if is_pair(c.id) {
 				if info, found := w.filter_registry[c.id]; found {
-					if links, ok2 := w.target_index[info.target]; ok2 {
-						for link, i in links {
+					if links_ptr := &w.target_index[info.target]; links_ptr^ != nil {
+						for link, i in links_ptr^ {
 							if link.source == entity && link.pair_id == c.id {
-								unordered_remove(&links, i)
+								unordered_remove(links_ptr, i)
 								break
 							}
 						}
@@ -737,8 +738,6 @@ world_get_all_components :: proc(
 	ok = true
 	return
 }
-
-/* Wrapper API for the Generic Event System */
 
 /*
 	Observes events related to a specific term (component or relationship). The callback is triggered whenever an entity gains or loses that term.

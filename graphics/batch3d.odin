@@ -36,6 +36,7 @@ init_batch3d :: proc(
 	device: wgpu.Device,
 	format: wgpu.TextureFormat,
 	source: Shader_Source = nil,
+	multisample_count: u32 = 1,
 ) -> Batch3D {
 	batch := Batch3D{}
 	batch.vertices = make([dynamic]Vertex3D)
@@ -98,7 +99,7 @@ init_batch3d :: proc(
 			buffers = &vertex_buffer_layout,
 		},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .Back},
-		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		multisample = {count = multisample_count, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
 		fragment = &fragment_state,
 	}
 

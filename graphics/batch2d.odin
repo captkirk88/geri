@@ -32,7 +32,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // init_batch2d initializes a 2D batching context, creating CPU dynamic arrays
 // and the default WGPU Render Pipeline. An optional shader source can be provided
 // to override the built-in default WGSL shader.
-init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Shader_Source = nil) -> Batch2D {
+init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Shader_Source = nil, multisample_count: u32 = 1) -> Batch2D {
 	batch := Batch2D{}
 	batch.vertices = make([dynamic]Vertex2D)
 	batch.indices = make([dynamic]u32)
@@ -92,7 +92,7 @@ init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Sh
 			buffers = &vertex_buffer_layout,
 		},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
-		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		multisample = {count = multisample_count, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
 		fragment = &fragment_state,
 	}
 

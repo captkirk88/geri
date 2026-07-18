@@ -27,7 +27,7 @@ import "scenes"
 Scene :: struct {
 	name: string,
 	init: proc(world: ^ecs.World),
-	exit: proc(world: ^ecs.World),
+	exit: proc(world: ^ecs.World) -> (errors.Error, bool),
 }
 
 clear_all_entities :: proc(world: ^ecs.World) {
@@ -44,19 +44,35 @@ clear_all_entities :: proc(world: ^ecs.World) {
 }
 
 scenes_list := []Scene {
-	{name = "Circles", init = scenes.circles_setup, exit = proc(world: ^ecs.World) {
+	{
+		name = "Circles",
+		init = scenes.circles_setup,
+		exit = proc(world: ^ecs.World) -> (errors.Error, bool) {
 			ecs.world_clear(world)
-		}},
-	{name = "Sprites", init = scenes.sprite_setup, exit = proc(world: ^ecs.World) {
+			return {}, true
+		},
+	},
+	{
+		name = "Sprites",
+		init = scenes.sprite_setup,
+		exit = proc(world: ^ecs.World) -> (errors.Error, bool) {
 			ecs.world_clear(world)
-		}},
-	{name = "Models", init = scenes.model_setup, exit = proc(world: ^ecs.World) {
+			return {}, true
+		},
+	},
+	{
+		name = "Models",
+		init = scenes.model_setup,
+		exit = proc(world: ^ecs.World) -> (errors.Error, bool) {
 			ecs.world_clear(world)
-		}},
+			return {}, true
+		},
+	},
 }
 
 SceneManager :: struct {
-	current_scene_idx: int,
+	current_scene_idx:  int,
+	duration_per_scene: f32,
 }
 
 scene_transition_system :: proc(
@@ -74,7 +90,7 @@ scene_transition_system :: proc(
 	elapsed.value^ += dt_sec
 
 	should_transition := false
-	if elapsed.value^ >= 1.0 {
+	if elapsed.value^ >= mgr.duration_per_scene {
 		elapsed.value^ = 0.0
 		should_transition = true
 	}
@@ -88,7 +104,18 @@ scene_transition_system :: proc(
 
 	if should_transition {
 		// Exit current scene
-		scenes_list[mgr.current_scene_idx].exit(world)
+		log.info("Calling exit for scene index %d", mgr.current_scene_idx)
+		exit_err, exit_ok := scenes_list[mgr.current_scene_idx].exit(world)
+		if !exit_ok {
+			log.error("Error exiting scene index %d: %v", mgr.current_scene_idx, exit_err)
+		}
+		log.info("Exit complete for scene index %d", mgr.current_scene_idx)
+
+		if mgr.current_scene_idx == len(scenes_list) - 1 {
+			log.info("Finished last scene.")
+			ecs.emit(world, app.App_Exit_Event{})
+			return
+		}
 
 		// Move to next scene
 		mgr.current_scene_idx = (mgr.current_scene_idx + 1) % len(scenes_list)
@@ -100,7 +127,9 @@ scene_transition_system :: proc(
 		}
 
 		// Init next scene
+		log.info("Calling init for scene: %s", scenes_list[mgr.current_scene_idx].name)
 		scenes_list[mgr.current_scene_idx].init(world)
+		log.info("Init complete for scene: %s", scenes_list[mgr.current_scene_idx].name)
 	}
 }
 
@@ -200,7 +229,7 @@ camera_resize_system :: proc(
 
 main :: proc() {
 	args := os.args
-	duration := 10 * time.Second
+	duration := 15 * time.Second
 	start_scene_idx := 0
 
 	// Argument parsing:
@@ -249,8 +278,12 @@ main :: proc() {
 	}
 
 	// Register SceneManager resource
+	// Calculate scene duration dynamically. If overall duration is 15s, and we have 3 scenes,
+	// each scene runs for 5s (15.0 / 3.0 = 5.0).
+	total_secs := f32(time.duration_seconds(duration))
 	mgr := SceneManager {
-		current_scene_idx = start_scene_idx,
+		current_scene_idx  = start_scene_idx,
+		duration_per_scene = total_secs / f32(len(scenes_list)),
 	}
 	app.app_add_resource(&application, mgr)
 

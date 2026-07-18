@@ -166,7 +166,18 @@ ui_render_label :: proc(
 			}
 		}
 		max_width := node.rect.w - node.padding[1] - node.padding[3]
-		graphics.draw_text(batch, label.text, x, y, font, 1.0, color, vp, max_width, label.multiline)
+		graphics.draw_text(
+			batch,
+			label.text,
+			x,
+			y,
+			font,
+			1.0,
+			color,
+			vp,
+			max_width,
+			label.multiline,
+		)
 	}
 }
 
@@ -566,7 +577,7 @@ ui_button_interaction_system :: proc(
 			btn := &buttons[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			is_down :=
@@ -622,7 +633,7 @@ ui_slider_interaction_system :: proc(
 			slider := &sliders[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			is_down :=
@@ -675,7 +686,7 @@ ui_checkbox_interaction_system :: proc(
 			checkbox := &checkboxes[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			is_down :=
@@ -730,7 +741,7 @@ ui_toggle_interaction_system :: proc(
 			toggle := &toggles[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			is_down :=
@@ -785,7 +796,7 @@ ui_radio_button_interaction_system :: proc(
 			radio_button := &radio_buttons[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			is_down :=
@@ -852,7 +863,7 @@ ui_text_input_interaction_system :: proc(
 			text_input := &text_inputs[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			in_bounds :=
@@ -1062,20 +1073,20 @@ ui_text_input_cleanup_system :: proc(
 }
 
 @(tag = "system")
-ui_scrollbar_interaction_system :: proc(
-	world: ^ecs.World,
-	mouse_inp: input.Input(input.MouseButtonCode),
-	gp_inp: input.Input(input.GamepadButton),
-	gp_axis_inp: input.Input(input.GamepadAxis),
-	dt: params.Res(app.DeltaTime),
-	config: params.Res(UI_Input_Config) = {},
-) {
+ui_scrollbar_interaction_system :: proc(q: params.Query(struct {
+			_: UI_Node,
+			_: Scrollbar,
+		}), mouse_inp: input.Input(
+		input.MouseButtonCode,
+	), gp_inp: input.Input(input.GamepadButton), gp_axis_inp: input.Input(input.GamepadAxis), dt: params.Res(app.DeltaTime), config: params.Res(UI_Input_Config) = {}) {
 	click_btn := config.ptr != nil ? config.ptr.mouse_click : input.MouseButtonCode.Left
 
 	is_down := input.is_down(mouse_inp, click_btn)
 	is_pressed := input.is_pressed(mouse_inp, click_btn)
 
-	for arch in ecs.query(world, UI_Node, Scrollbar) {
+	world := q.state.world
+
+	for arch in params.query(q) {
 		nodes := ecs.arch_get_field(arch, UI_Node)
 		scrollbars := ecs.arch_get_field(arch, Scrollbar)
 		entities := ecs.arch_get_entities(arch)
@@ -1085,7 +1096,7 @@ ui_scrollbar_interaction_system :: proc(
 			scrollbar := &scrollbars[i]
 			entity := entities[i]
 
-			root_canvas := ui_get_root_canvas(world, entity)
+			root_canvas := ecs.relations_get_root(world, entity, UI_ChildOf)
 			mpos := input.mouse_position(mouse_inp, root_canvas)
 
 			in_bounds :=
@@ -1118,14 +1129,22 @@ ui_scrollbar_interaction_system :: proc(
 						knob_h := node.rect.h * knob_sz
 						max_travel := node.rect.h - knob_h
 						if max_travel > 0.0 {
-							scrollbar.value = clamp((local_y - knob_h / 2.0) / max_travel, 0.0, 1.0)
+							scrollbar.value = clamp(
+								(local_y - knob_h / 2.0) / max_travel,
+								0.0,
+								1.0,
+							)
 						}
 					} else {
 						local_x := mpos.x - node.rect.x
 						knob_w := node.rect.w * knob_sz
 						max_travel := node.rect.w - knob_w
 						if max_travel > 0.0 {
-							scrollbar.value = clamp((local_x - knob_w / 2.0) / max_travel, 0.0, 1.0)
+							scrollbar.value = clamp(
+								(local_x - knob_w / 2.0) / max_travel,
+								0.0,
+								1.0,
+							)
 						}
 					}
 					if scrollbar.value != prev_val {
@@ -1174,4 +1193,3 @@ ui_scrollbar_interaction_system :: proc(
 		}
 	}
 }
-

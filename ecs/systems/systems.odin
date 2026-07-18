@@ -639,7 +639,7 @@ new_system :: proc(
 		// you can just manually unpack up to your supported maximum arguments, like this:
 
 		param_count := len(params_info.types)
-		args: [8]rawptr
+		args: [20]rawptr
 		offset: uintptr = 0
 		for i in 0 ..< min(param_count, len(args)) {
 			ti := params_info.types[i]
@@ -732,6 +732,267 @@ new_system :: proc(
 				val(args[5], params_info.types[5]),
 				val(args[6], params_info.types[6]),
 				val(args[7], params_info.types[7]),
+			)
+		case 9:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+			)
+		case 10:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+			)
+		case 11:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+			)
+		case 12:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+			)
+		case 13:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+			)
+		case 14:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+			)
+		case 15:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+				val(args[14], params_info.types[14]),
+			)
+		case 16:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+				val(args[14], params_info.types[14]),
+				val(args[15], params_info.types[15]),
+			)
+		case 17:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+				val(args[14], params_info.types[14]),
+				val(args[15], params_info.types[15]),
+				val(args[16], params_info.types[16]),
+			)
+		case 18:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+				val(args[14], params_info.types[14]),
+				val(args[15], params_info.types[15]),
+				val(args[16], params_info.types[16]),
+				val(args[17], params_info.types[17]),
+			)
+		case 19:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+				val(args[14], params_info.types[14]),
+				val(args[15], params_info.types[15]),
+				val(args[16], params_info.types[16]),
+				val(args[17], params_info.types[17]),
+				val(args[18], params_info.types[18]),
+			)
+		case 20:
+			(cast(proc(
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+					_: rawptr, _: rawptr, _: rawptr, _: rawptr, _: rawptr,
+				))(fn_ptr))(
+				val(args[0], params_info.types[0]),
+				val(args[1], params_info.types[1]),
+				val(args[2], params_info.types[2]),
+				val(args[3], params_info.types[3]),
+				val(args[4], params_info.types[4]),
+				val(args[5], params_info.types[5]),
+				val(args[6], params_info.types[6]),
+				val(args[7], params_info.types[7]),
+				val(args[8], params_info.types[8]),
+				val(args[9], params_info.types[9]),
+				val(args[10], params_info.types[10]),
+				val(args[11], params_info.types[11]),
+				val(args[12], params_info.types[12]),
+				val(args[13], params_info.types[13]),
+				val(args[14], params_info.types[14]),
+				val(args[15], params_info.types[15]),
+				val(args[16], params_info.types[16]),
+				val(args[17], params_info.types[17]),
+				val(args[18], params_info.types[18]),
+				val(args[19], params_info.types[19]),
 			)
 		}
 	}

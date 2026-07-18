@@ -6,8 +6,11 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:time"
+import "core:image"
+import "core:strings"
 import "vendor:cgltf"
 import "vendor:sdl3"
+import "vendor:wgpu"
 
 import "../../asset"
 import "../../camera"
@@ -57,6 +60,10 @@ model_setup :: proc(world: ^ecs.World) {
 	mtl_res := asset.asset_server_load(server, "game://Wolf_One.mtl", asset.Materials)
 	mtl_data := errors.unwrap(mtl_res)
 
+	// Load WGSL shader assets
+	pbr_shader_res := asset.asset_server_load(server, "game://shaders/pbr.wgsl", graphics.Shader_Asset)
+	_ = errors.unwrap(pbr_shader_res)
+
 	// Resolve AssetIds
 	_, gltf_id_untyped, _ := asset.asset_schemas_resolve(
 		&server.registry,
@@ -80,6 +87,40 @@ model_setup :: proc(world: ^ecs.World) {
 	if mtl_data != nil {
 		if mat, ok := mtl_data.materials["Wolf_Body"]; ok {
 			wolf_color = {mat.diffuse.x, mat.diffuse.y, mat.diffuse.z, 1.0}
+		}
+		// Load textures referenced by any material
+		for _, mat in mtl_data.materials {
+			if len(mat.map_kd) > 0 {
+				// Normalize backslashes to forward slashes
+				clean_tex, _ := strings.replace_all(mat.map_kd, "\\", "/", context.temp_allocator)
+				
+				// Strip any leading Blender-specific option switches (e.g., "-s 0.8 0.8 1.0")
+				fields := strings.fields(clean_tex, context.temp_allocator)
+				if len(fields) > 0 {
+					clean_tex = fields[len(fields)-1]
+				}
+
+				// Find "textures/" substring and slice starting from that, or default to the file basename
+				tex_idx := strings.index(clean_tex, "textures/")
+				if tex_idx != -1 {
+					clean_tex = clean_tex[tex_idx:]
+				} else {
+					// Fallback: if "textures/" is not in path, try to find last slash to get basename
+					last_slash := strings.last_index(clean_tex, "/")
+					if last_slash != -1 {
+						clean_tex = fmt.tprintf("textures/%s", clean_tex[last_slash+1:])
+					} else {
+						clean_tex = fmt.tprintf("textures/%s", clean_tex)
+					}
+				}
+				
+				// Clean up any double slashes (e.g. "//") in the path
+				clean_tex, _ = strings.replace_all(clean_tex, "//", "/", context.temp_allocator)
+				
+				tex_uri := fmt.tprintf("game://%s", clean_tex)
+				log.info("Loading material texture: %s", tex_uri)
+				_ = asset.asset_server_load(server, tex_uri, image.Image)
+			}
 		}
 	}
 
@@ -245,6 +286,8 @@ draw_gltf_node :: proc(
 	n: ^cgltf.node,
 	color: [4]f32,
 	vp: linalg.Matrix4f32,
+	model_m4: linalg.Matrix4f32,
+	use_pbr: bool,
 ) {
 	if n == nil do return
 
@@ -252,7 +295,8 @@ draw_gltf_node :: proc(
 	cgltf.node_transform_world(n, ([^]f32)(&mat[0]))
 	node_m4 := transmute(linalg.Matrix4f32)mat
 
-	mvp := vp * node_m4
+	combined_model := model_m4 * node_m4
+	mvp := vp * combined_model
 
 	if n.mesh != nil {
 		for &prim in n.mesh.primitives {
@@ -293,10 +337,21 @@ draw_gltf_node :: proc(
 					pos_buffer[i * 3 + 1],
 					pos_buffer[i * 3 + 2],
 				}
+				
+				final_pos: [3]f32
+				if use_pbr {
+					// PBR shader projects on GPU, so CPU only transforms to world-space
+					world_pos4 := combined_model * [4]f32{raw_pos[0], raw_pos[1], raw_pos[2], 1.0}
+					final_pos = world_pos4.xyz
+				} else {
+					// Default shader expects clip space
+					final_pos = threeD.project_point(mvp, raw_pos)
+				}
+
 				append(
 					&batch.vertices,
 					graphics.Vertex3D {
-						position = threeD.project_point(mvp, raw_pos),
+						position = final_pos,
 						color = color,
 					},
 				)
@@ -318,7 +373,7 @@ draw_gltf_node :: proc(
 	}
 
 	for child in n.children {
-		draw_gltf_node(batch, data, child, color, vp)
+		draw_gltf_node(batch, data, child, color, vp, model_m4, use_pbr)
 	}
 }
 
@@ -327,19 +382,21 @@ draw_gltf_model_hierarchical :: proc(
 	model: ^asset.Gltf_Data,
 	color: [4]f32,
 	vp: linalg.Matrix4f32,
+	model_m4: linalg.Matrix4f32,
+	use_pbr: bool,
 ) {
 	if model == nil || model.raw_data == nil do return
 	data := model.raw_data
 
 	if data.scene != nil {
 		for n in data.scene.nodes {
-			draw_gltf_node(batch, data, n, color, vp)
+			draw_gltf_node(batch, data, n, color, vp, model_m4, use_pbr)
 		}
 	} else {
 		for i in 0 ..< len(data.nodes) {
 			n := &data.nodes[i]
 			if n.parent == nil {
-				draw_gltf_node(batch, data, n, color, vp)
+				draw_gltf_node(batch, data, n, color, vp, model_m4, use_pbr)
 			}
 		}
 	}
@@ -353,6 +410,15 @@ model_update_system :: proc(
 	prev_tick_local: params.Local(time.Tick),
 	initialized_local: params.Local(bool),
 	anim_timer: params.Local(f32),
+	gltfs: params.Assets(asset.Gltf_Data),
+	gltf_query: params.Query(struct {
+		t: transform.Transform,
+		m: GltfModel,
+	}),
+	obj_query: params.Query(struct {
+		t: transform.Transform,
+		m: ObjModel,
+	}),
 ) {
 	active_scene := ecs.world_get_resource(world, ActiveScene)
 	if active_scene == nil || active_scene.index != 2 do return
@@ -402,7 +468,7 @@ model_update_system :: proc(
 		q_x := linalg.quaternion_angle_axis_f32(rot_x, {1, 0, 0})
 		q_rot := q_y * q_x
 
-		for arch in ecs.query(world, transform.Transform, GltfModel) {
+		for arch in params.query(gltf_query) {
 			transforms := ecs.arch_get_field(arch, transform.Transform)
 			for i in 0 ..< len(transforms) {
 				t := &transforms[i]
@@ -410,15 +476,7 @@ model_update_system :: proc(
 			}
 		}
 
-		for arch in ecs.query(world, transform.Transform, ObjModel) {
-			transforms := ecs.arch_get_field(arch, transform.Transform)
-			for i in 0 ..< len(transforms) {
-				t := &transforms[i]
-				transform.rotate_local(t, q_rot)
-			}
-		}
-
-		for arch in ecs.query(world, transform.Transform, ObjModel) {
+		for arch in params.query(obj_query) {
 			transforms := ecs.arch_get_field(arch, transform.Transform)
 			for i in 0 ..< len(transforms) {
 				t := &transforms[i]
@@ -428,18 +486,24 @@ model_update_system :: proc(
 	}
 
 	// 3. Animate GLTF Models
-	gltf_mgr := ecs.world_get_resource(world, asset.AssetManager(asset.Gltf_Data))
-	if gltf_mgr != nil {
-		for arch in ecs.query(world, GltfModel) {
-			models := ecs.arch_get_field(arch, GltfModel)
-			for i in 0 ..< len(models) {
-				m := models[i]
-				if gltf_ptr, ok := &gltf_mgr.assets[m.asset.id]; ok {
-					update_gltf_animation(gltf_ptr.raw_data, t_elapsed)
+	for arch in params.query(gltf_query) {
+		models := ecs.arch_get_field(arch, GltfModel)
+		for i in 0 ..< len(models) {
+			m := models[i]
+			for &entry in gltfs.assets {
+				if entry.id.id.value == m.asset.id.value {
+					update_gltf_animation(entry.asset.raw_data, t_elapsed)
+					break
 				}
 			}
 		}
 	}
+}
+
+ModelLocalState :: struct {
+	pbr_shader_pass: graphics.Shader_Pass,
+	pbr_initialized: bool,
+	log_once:        bool,
 }
 
 model_draw_system :: proc(
@@ -447,6 +511,26 @@ model_draw_system :: proc(
 	batch3d: params.Res(graphics.Batch3D),
 	batch2d: params.Res(graphics.Batch2D),
 	window_res: params.Res(windowing.Window_Context),
+	pbr_config_res: params.Res(graphics.Pbr_Config),
+	render_ctx: params.Res(graphics.Render_Context),
+	gltfs: params.Assets(asset.Gltf_Data),
+	objs: params.Assets(asset.Obj_Mesh),
+	materials: params.Assets(asset.Materials),
+	images: params.Assets(image.Image),
+	shaders: params.Assets(graphics.Shader_Asset),
+	gltf_query: params.Query(struct {
+		t: transform.Transform,
+		m: GltfModel,
+	}),
+	obj_query: params.Query(struct {
+		t: transform.Transform,
+		m: ObjModel,
+	}),
+	cam_query: params.Query(struct {
+		c: camera.Camera,
+		t: transform.Transform,
+	}),
+	local_state: params.Local(ModelLocalState),
 ) {
 	active_scene := ecs.world_get_resource(world, ActiveScene)
 	if active_scene == nil || active_scene.index != 2 do return
@@ -465,35 +549,201 @@ model_draw_system :: proc(
 
 	vp := graphics.resolve_camera_vp(world, {})
 
+	// Get camera position
+	cam_pos := [3]f32{0.0, 1.0, 8.0}
+	for arch in params.query(cam_query) {
+		transforms := ecs.arch_get_field(arch, transform.Transform)
+		if len(transforms) > 0 {
+			cam_pos = transform.get_translation(transforms[0])
+			break
+		}
+	}
+
+	// 1. Initialize PBR shader pass from shader assets
+	if local_state.value.pbr_initialized == false && render_ctx.ptr != nil && render_ctx.ptr.device != nil {
+		// Resolve path to search for compiled module
+		_, pbr_id, ok := asset.asset_schemas_resolve(&graphics.global_asset_server.registry, "game://shaders/pbr.wgsl")
+		if ok {
+			for &entry in shaders.assets {
+				if entry.id.id.value == pbr_id.value {
+					sample_count: u32 = 1
+					if pbr_config_res.ptr != nil {
+						sample_count = u32(pbr_config_res.ptr.antialiasing)
+					}
+					pass, pbr_ok := graphics.create_pbr_shader_pass(
+						render_ctx.ptr.device,
+						&entry.asset,
+						render_ctx.ptr.config.format,
+						sample_count,
+					)
+					if pbr_ok {
+						local_state.value.pbr_shader_pass = pass
+						local_state.value.pbr_initialized = true
+					}
+					break
+				}
+			}
+		}
+	}
+
+	use_pbr := local_state.value.pbr_initialized
+
+	if local_state.value.log_once == false {
+		local_state.value.log_once = true
+		log.info("DEBUG: model_draw_system:")
+		log.info("DEBUG: len(shaders.assets) =", len(shaders.assets))
+		log.info("DEBUG: len(gltfs.assets) =", len(gltfs.assets))
+		log.info("DEBUG: len(objs.assets) =", len(objs.assets))
+		log.info("DEBUG: len(materials.assets) =", len(materials.assets))
+		log.info("DEBUG: len(images.assets) =", len(images.assets))
+		log.info("DEBUG: use_pbr =", use_pbr)
+		log.info("DEBUG: pbr_initialized.value^ =", local_state.value.pbr_initialized)
+		log.info("DEBUG: cam_pos =", cam_pos)
+	}
+
+	// 2. Setup PBR Uniforms if active
+	if use_pbr {
+		pass_idx := -1
+		for p, idx in batch.shader_passes {
+			if p.render_pipeline == local_state.value.pbr_shader_pass.render_pipeline {
+				pass_idx = idx
+				break
+			}
+		}
+		if pass_idx == -1 {
+			append(&batch.shader_passes, local_state.value.pbr_shader_pass)
+			pass_idx = len(batch.shader_passes) - 1
+		}
+		batch.active_pass_idx = pass_idx
+
+		// Update Uniforms
+		uniforms: graphics.Pbr_Uniforms
+		uniforms.vp = vp
+		uniforms.model = linalg.MATRIX4F32_IDENTITY
+		uniforms.cam_pos = cam_pos
+		
+		if pbr_config_res.ptr != nil {
+			uniforms.lights = pbr_config_res.ptr.lights
+			uniforms.num_lights = pbr_config_res.ptr.num_lights
+			uniforms.roughness = pbr_config_res.ptr.roughness
+			uniforms.metallic = pbr_config_res.ptr.metallic
+			uniforms.ao = pbr_config_res.ptr.ao
+		}
+
+		graphics.shader_pass_update_uniforms(&batch.shader_passes[pass_idx], render_ctx.ptr, uniforms)
+	} else {
+		batch.active_pass_idx = -1
+	}
+
 	// Draw GLTF models
-	gltf_mgr := ecs.world_get_resource(world, asset.AssetManager(asset.Gltf_Data))
-	if gltf_mgr != nil {
-		for arch in ecs.query(world, transform.Transform, GltfModel) {
-			transforms := ecs.arch_get_field(arch, transform.Transform)
-			models := ecs.arch_get_field(arch, GltfModel)
-			for i in 0 ..< len(transforms) {
-				t := transforms[i]
-				m := models[i]
-				if gltf_ptr, ok := &gltf_mgr.assets[m.asset.id]; ok {
-					model_vp := vp * t.world_matrix
-					draw_gltf_model_hierarchical(batch, gltf_ptr, m.color, model_vp)
+	for arch in params.query(gltf_query) {
+		transforms := ecs.arch_get_field(arch, transform.Transform)
+		models := ecs.arch_get_field(arch, GltfModel)
+		for i in 0 ..< len(transforms) {
+			t := transforms[i]
+			m := models[i]
+			
+			// Find GLTF data in Assets(Gltf_Data)
+			for &entry in gltfs.assets {
+				if entry.id.id.value == m.asset.id.value {
+					draw_gltf_model_hierarchical(batch, &entry.asset, m.color, vp, t.world_matrix, use_pbr)
+					break
 				}
 			}
 		}
 	}
 
 	// Draw OBJ models
-	obj_mgr := ecs.world_get_resource(world, asset.AssetManager(asset.Obj_Mesh))
-	if obj_mgr != nil {
-		for arch in ecs.query(world, transform.Transform, ObjModel) {
-			transforms := ecs.arch_get_field(arch, transform.Transform)
-			models := ecs.arch_get_field(arch, ObjModel)
-			for i in 0 ..< len(transforms) {
-				t := transforms[i]
-				m := models[i]
-				if obj_ptr, ok := &obj_mgr.assets[m.mesh.id]; ok {
-					model_vp := vp * t.world_matrix
-					threeD.draw_model(batch, obj_ptr, m.color, model_vp)
+	for arch in params.query(obj_query) {
+		transforms := ecs.arch_get_field(arch, transform.Transform)
+		models := ecs.arch_get_field(arch, ObjModel)
+		for i in 0 ..< len(transforms) {
+			t := transforms[i]
+			m := models[i]
+			
+			// Find OBJ data in Assets(Obj_Mesh)
+			for &entry in objs.assets {
+				if entry.id.id.value == m.mesh.id.value {
+					obj_ptr := &entry.asset
+					base_idx := u32(len(batch.vertices))
+					
+					// Find map_kd texture if material exists
+					tex_ptr: ^image.Image = nil
+					for &mtl_entry in materials.assets {
+						if mtl_entry.id.id.value == m.materials.id.value {
+							mtl_data := &mtl_entry.asset
+							if mat, ok3 := mtl_data.materials["Wolf_Body"]; ok3 && len(mat.map_kd) > 0 {
+								clean_tex, _ := strings.replace_all(mat.map_kd, "\\", "/", context.temp_allocator)
+								fields := strings.fields(clean_tex, context.temp_allocator)
+								if len(fields) > 0 do clean_tex = fields[len(fields)-1]
+								tex_idx := strings.index(clean_tex, "textures/")
+								if tex_idx != -1 {
+									clean_tex = clean_tex[tex_idx:]
+								} else {
+									last_slash := strings.last_index(clean_tex, "/")
+									if last_slash != -1 {
+										clean_tex = fmt.tprintf("textures/%s", clean_tex[last_slash+1:])
+									} else {
+										clean_tex = fmt.tprintf("textures/%s", clean_tex)
+									}
+								}
+								clean_tex, _ = strings.replace_all(clean_tex, "//", "/", context.temp_allocator)
+								
+								// Resolve untyped asset ID for texture
+								_, tex_id, _ := asset.asset_schemas_resolve(&graphics.global_asset_server.registry, fmt.tprintf("game://%s", clean_tex))
+								for &img_entry in images.assets {
+									if img_entry.id.id.value == tex_id.value {
+										tex_ptr = &img_entry.asset
+										break
+									}
+								}
+							}
+							break
+						}
+					}
+					
+					for v, idx in obj_ptr.vertices {
+						v_color := m.color
+						if tex_ptr != nil && len(obj_ptr.texcoords) > idx {
+							uv := obj_ptr.texcoords[idx]
+							tx := int(uv.x * f32(tex_ptr.width)) % tex_ptr.width
+							ty := int((1.0 - uv.y) * f32(tex_ptr.height)) % tex_ptr.height
+							if tx < 0 do tx += tex_ptr.width
+							if ty < 0 do ty += tex_ptr.height
+							
+							v_color = graphics.get_pixel(tex_ptr, tx, ty)
+						} else {
+							// Fallback to diffuse flat color
+							for &mtl_entry in materials.assets {
+								if mtl_entry.id.id.value == m.materials.id.value {
+									mtl_data := &mtl_entry.asset
+									if mat, ok3 := mtl_data.materials["Wolf_Body"]; ok3 {
+										v_color = {mat.diffuse.x, mat.diffuse.y, mat.diffuse.z, 1.0}
+									}
+									break
+								}
+							}
+						}
+						
+						final_pos: [3]f32
+						raw_pos := [3]f32{v[0], v[1], v[2]}
+						if use_pbr {
+							world_pos4 := t.world_matrix * [4]f32{raw_pos[0], raw_pos[1], raw_pos[2], 1.0}
+							final_pos = world_pos4.xyz
+						} else {
+							final_pos = threeD.project_point(vp * t.world_matrix, raw_pos)
+						}
+
+						append(&batch.vertices, graphics.Vertex3D{
+							position = final_pos,
+							color = v_color,
+						})
+					}
+					
+					for idx in obj_ptr.indices {
+						append(&batch.indices, base_idx + idx)
+					}
+					break
 				}
 			}
 		}
@@ -506,9 +756,10 @@ model_draw_system :: proc(
 		h := f32(win_h)
 		ui_vp := linalg.matrix_ortho3d_f32(-w / 2, w / 2, -h / 2, h / 2, -1.0, 1.0)
 
+		pbr_str := "[color=green]Active[/color]" if use_pbr else "[color=red]Disabled (No PBR Shader loaded)[/color]"
 		graphics.draw_text(
 			batch2d.ptr,
-			"Scene 3: [color=orange]3D Models[/color] (GLTF & OBJ). Press ESC to switch scene.",
+			fmt.tprintf("Scene 3: [color=orange]3D PBR Models[/color] (%s). Press ESC to switch scene.", pbr_str),
 			-350 * ui_scale,
 			220 * ui_scale,
 			font,

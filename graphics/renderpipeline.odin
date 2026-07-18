@@ -181,7 +181,7 @@ main_render_system :: proc(
 		color = {0.1, 0.2, 0.3, 1.0} // Default dark blue
 	}
 
-	render_pass := begin_render_pass(fctx, wgpu.LoadOp.Clear, color)
+	render_pass := begin_render_pass(ctx, fctx, wgpu.LoadOp.Clear, color)
 	defer end_render_pass(render_pass)
 
 	if batch3d.ptr != nil {
@@ -199,15 +199,22 @@ begin_render_pass :: proc {
 }
 
 begin_frame_render_pass :: proc(
+	ctx: ^Render_Context,
 	fctx: ^Frame_Context,
 	load_op: wgpu.LoadOp = .Load,
 	clear_color: wgpu.Color = {},
 	store_op: wgpu.StoreOp = .Store,
 	depth_stencil: ^wgpu.RenderPassDepthStencilAttachment = nil,
-	resolve_target: wgpu.TextureView = nil,
 ) -> wgpu.RenderPassEncoder {
+	view := fctx.texture_view
+	resolve_target: wgpu.TextureView = nil
+	if ctx != nil && ctx.msaa_view != nil {
+		view = ctx.msaa_view
+		resolve_target = fctx.texture_view
+	}
+
 	color_attachment := wgpu.RenderPassColorAttachment {
-		view          = fctx.texture_view,
+		view          = view,
 		loadOp        = load_op,
 		storeOp       = store_op,
 		clearValue    = clear_color,
@@ -268,12 +275,12 @@ render_batch2d_frame :: proc(
 	resolve_target: wgpu.TextureView = nil,
 ) {
 	pass := begin_frame_render_pass(
+		ctx,
 		fctx,
 		load_op,
 		clear_color,
 		store_op,
 		depth_stencil,
-		resolve_target,
 	)
 	defer end_render_pass(pass)
 	batch2d_flush(batch, ctx, pass)
@@ -320,12 +327,12 @@ render_batch3d_frame :: proc(
 	resolve_target: wgpu.TextureView = nil,
 ) {
 	pass := begin_frame_render_pass(
+		ctx,
 		fctx,
 		load_op,
 		clear_color,
 		store_op,
 		depth_stencil,
-		resolve_target,
 	)
 	defer end_render_pass(pass)
 	batch3d_flush(batch, ctx, pass)

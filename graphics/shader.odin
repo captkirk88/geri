@@ -16,11 +16,8 @@ create_render_shader_pass :: proc(
 	is_3d: bool = false,
 	format: wgpu.TextureFormat = .BGRA8Unorm,
 	uniform_size: u64 = 0,
+	multisample_count: u32 = 1,
 ) -> errors.Result(Shader_Pass, errors.Error) {
-	pass: Shader_Pass
-	pass.type = .Render
-	pass.uniform_size = uniform_size
-
 	// Read WGSL source from Reader
 	wgsl_code, read_ok := read_all(wgsl_source, context.temp_allocator)
 	if !read_ok do return errors.Err(errors.Error){error = errors.new("Failed to read WGSL source")}
@@ -33,8 +30,48 @@ create_render_shader_pass :: proc(
 	shader_desc := wgpu.ShaderModuleDescriptor {
 		nextInChain = &shader_source.chain,
 	}
-	pass.shader_module = wgpu.DeviceCreateShaderModule(device, &shader_desc)
-	if pass.shader_module == nil do return errors.Err(errors.Error){error = errors.new("Failed to compile Shader Module")}
+	shader_module := wgpu.DeviceCreateShaderModule(device, &shader_desc)
+	if shader_module == nil do return errors.Err(errors.Error){error = errors.new("Failed to compile Shader Module")}
+
+	res := create_shader_pass_from_module(
+		device,
+		shader_module,
+		vertex_entry,
+		fragment_entry,
+		is_3d,
+		format,
+		uniform_size,
+		multisample_count,
+		own_module = true,
+	)
+	#partial switch r in res {
+	case errors.Err(errors.Error):
+		wgpu.ShaderModuleRelease(shader_module)
+		return res
+	case errors.Ok(Shader_Pass):
+		return res
+	}
+
+	return errors.Err(errors.Error){error = errors.new("unreachable")}
+}
+
+// Creates a render shader pass using an already compiled ShaderModule.
+create_shader_pass_from_module :: proc(
+	device: wgpu.Device,
+	shader_module: wgpu.ShaderModule,
+	vertex_entry: string = "vs_main",
+	fragment_entry: string = "fs_main",
+	is_3d: bool = false,
+	format: wgpu.TextureFormat = .BGRA8Unorm,
+	uniform_size: u64 = 0,
+	multisample_count: u32 = 1,
+	own_module: bool = false,
+) -> errors.Result(Shader_Pass, errors.Error) {
+	pass: Shader_Pass
+	pass.type = .Render
+	pass.uniform_size = uniform_size
+	pass.shader_module = shader_module
+	pass.own_module = own_module
 
 	// Setup Bind Group and layout if uniforms are requested
 	pipeline_layout: wgpu.PipelineLayout
@@ -46,7 +83,7 @@ create_render_shader_pass :: proc(
 		}
 		pass.uniform_buf = wgpu.DeviceCreateBuffer(device, &buf_desc)
 		if pass.uniform_buf == nil {
-			wgpu.ShaderModuleRelease(pass.shader_module)
+			destroy_shader_pass(&pass)
 			return errors.Err(errors.Error){error = errors.new("Failed to create Uniform Buffer")}
 		}
 
@@ -62,8 +99,7 @@ create_render_shader_pass :: proc(
 		}
 		pass.bind_group_layout = wgpu.DeviceCreateBindGroupLayout(device, &layout_desc)
 		if pass.bind_group_layout == nil {
-			wgpu.BufferRelease(pass.uniform_buf)
-			wgpu.ShaderModuleRelease(pass.shader_module)
+			destroy_shader_pass(&pass)
 			return errors.Err(errors.Error){error = errors.new("Failed to create Bind Group Layout")}
 		}
 
@@ -81,9 +117,7 @@ create_render_shader_pass :: proc(
 		}
 		pass.bind_group = wgpu.DeviceCreateBindGroup(device, &bg_desc)
 		if pass.bind_group == nil {
-			wgpu.BindGroupLayoutRelease(pass.bind_group_layout)
-			wgpu.BufferRelease(pass.uniform_buf)
-			wgpu.ShaderModuleRelease(pass.shader_module)
+			destroy_shader_pass(&pass)
 			return errors.Err(errors.Error){error = errors.new("Failed to create Bind Group")}
 		}
 
@@ -158,7 +192,7 @@ create_render_shader_pass :: proc(
 			buffers = &vertex_buffer_layout,
 		},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = is_3d ? .Back : .None},
-		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		multisample = {count = multisample_count, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
 		fragment = &fragment_state,
 	}
 
@@ -351,7 +385,9 @@ destroy_shader_pass :: proc(pass: ^Shader_Pass) {
 		pass.uniform_buf = nil
 	}
 	if pass.shader_module != nil {
-		wgpu.ShaderModuleRelease(pass.shader_module)
+		if pass.own_module {
+			wgpu.ShaderModuleRelease(pass.shader_module)
+		}
 		pass.shader_module = nil
 	}
 }

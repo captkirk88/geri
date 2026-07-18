@@ -12,8 +12,225 @@ import "./components"
 import "base:runtime"
 import "core:fmt"
 import "core:image"
+import "core:io"
+import "core:os"
+import "core:path/filepath"
+import "core:strings"
+import "core:sync"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
+
+global_render_context: ^Render_Context
+
+recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
+	if ctx.msaa_view != nil {
+		wgpu.TextureViewRelease(ctx.msaa_view)
+		ctx.msaa_view = nil
+	}
+	if ctx.msaa_texture != nil {
+		wgpu.TextureRelease(ctx.msaa_texture)
+		ctx.msaa_texture = nil
+	}
+
+	if sample_count > 1 {
+		desc := wgpu.TextureDescriptor {
+			usage         = {.RenderAttachment},
+			dimension     = ._2D,
+			size          = {ctx.config.width, ctx.config.height, 1},
+			format        = ctx.config.format,
+			mipLevelCount = 1,
+			sampleCount   = sample_count,
+		}
+		ctx.msaa_texture = wgpu.DeviceCreateTexture(ctx.device, &desc)
+		if ctx.msaa_texture != nil {
+			ctx.msaa_view = wgpu.TextureCreateView(ctx.msaa_texture, nil)
+		}
+	}
+}
+
+preprocess_wgsl_includes :: proc(
+	raw_code: string,
+	server: ^asset.AssetServer,
+	current_dir: string,
+	allocator: runtime.Allocator,
+) -> (
+	string,
+	bool,
+) {
+	lines := strings.split_lines(raw_code, context.temp_allocator)
+	var_builder: strings.Builder
+	strings.builder_init(&var_builder, allocator)
+
+	for line in lines {
+		trimmed := strings.trim_space(line)
+		if strings.has_prefix(trimmed, "//!include ") {
+			rem := trimmed[len("//!include "):]
+			rem = strings.trim_space(rem)
+			if len(rem) >= 2 && rem[0] == '"' && rem[len(rem) - 1] == '"' {
+				inc_path := rem[1:len(rem) - 1]
+
+				resolved_path: string
+				resolved_id: asset.UntypedAssetId
+				ok: bool
+
+				if strings.contains(inc_path, "://") {
+					resolved_path, resolved_id, ok = asset.asset_schemas_resolve(
+						&server.registry,
+						asset.AssetPath(inc_path),
+					)
+				} else {
+					relative_full := strings.concatenate(
+						{current_dir, "/", inc_path},
+						context.temp_allocator,
+					)
+					resolved_path, resolved_id, ok = asset.asset_schemas_resolve(
+						&server.registry,
+						asset.AssetPath(relative_full),
+					)
+				}
+
+				if !ok {
+					log.error("Shader preprocessor: Failed to resolve include path: %s", inc_path)
+					strings.builder_destroy(&var_builder)
+					return "", false
+				}
+
+				dep_bytes: []byte
+				read_ok := false
+
+				sync.mutex_lock(&server.mutex)
+				embed_data, found_embed := server.embedded_assets[inc_path]
+				if !found_embed {
+					embed_data, found_embed = server.embedded_assets[resolved_path]
+				}
+				if found_embed {
+					dep_bytes = embed_data
+					read_ok = true
+				}
+				sync.mutex_unlock(&server.mutex)
+
+				if !read_ok {
+					err: os.Error
+					dep_bytes, err = os.read_entire_file(resolved_path, context.temp_allocator)
+					if err == nil {
+						read_ok = true
+					}
+				}
+
+				if !read_ok {
+					log.error(
+						"Shader preprocessor: Failed to read include file: %s (resolved: %s)",
+						inc_path,
+						resolved_path,
+					)
+					strings.builder_destroy(&var_builder)
+					return "", false
+				}
+
+				next_dir := filepath.dir(resolved_path)
+				dep_code, dep_ok := preprocess_wgsl_includes(
+					string(dep_bytes),
+					server,
+					next_dir,
+					allocator,
+				)
+				if !dep_ok {
+					strings.builder_destroy(&var_builder)
+					return "", false
+				}
+				defer delete(dep_code, allocator)
+
+				strings.write_string(&var_builder, dep_code)
+				strings.write_rune(&var_builder, '\n')
+			}
+		} else {
+			strings.write_string(&var_builder, line)
+			strings.write_rune(&var_builder, '\n')
+		}
+	}
+
+	return strings.to_string(var_builder), true
+}
+
+shader_loader_proc :: proc(
+	reader: io.Reader,
+	settings: rawptr,
+	allocator: runtime.Allocator,
+) -> errors.Result(rawptr, errors.Error) {
+	data_bytes := make([dynamic]byte, context.temp_allocator)
+	buf: [4096]byte
+	for {
+		n, err := io.read(reader, buf[:])
+		if n > 0 {
+			append(&data_bytes, ..buf[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	server := global_asset_server
+	if server == nil {
+		return errors.Err(errors.Error) {
+			error = errors.new("Shader loader: AssetServer not registered globally"),
+		}
+	}
+
+	current_dir := "test_assets/shaders"
+	if settings != nil {
+		path_str := string((cstring)(settings))
+		current_dir = filepath.dir(path_str)
+	}
+
+	preprocessed, preprocess_ok := preprocess_wgsl_includes(
+		string(data_bytes[:]),
+		server,
+		current_dir,
+		context.temp_allocator,
+	)
+	if !preprocess_ok {
+		return errors.Err(errors.Error){error = errors.new("Failed to preprocess WGSL includes")}
+	}
+
+	ctx := global_render_context
+	if ctx == nil || ctx.device == nil {
+		return errors.Err(errors.Error) {
+			error = errors.new("Shader loader: Render_Context not available"),
+		}
+	}
+
+	shader_source := wgpu.ChainedStruct {
+		sType = .ShaderSourceWGSL,
+	}
+	shader_source_wgsl := wgpu.ShaderSourceWGSL {
+		chain = shader_source,
+		code  = preprocessed,
+	}
+	shader_desc := wgpu.ShaderModuleDescriptor {
+		nextInChain = &shader_source_wgsl.chain,
+	}
+	module := wgpu.DeviceCreateShaderModule(ctx.device, &shader_desc)
+	if module == nil {
+		return errors.Err(errors.Error) {
+			error = errors.new("Failed to compile preprocessed WGSL shader"),
+		}
+	}
+
+	shader_asset := new(Shader_Asset, allocator)
+	shader_asset.module = module
+	return errors.Ok(rawptr){value = shader_asset}
+}
+
+shader_destroy_proc :: proc(asset_ptr: rawptr, allocator: runtime.Allocator) {
+	shader_ptr := (^Shader_Asset)(asset_ptr)
+	if shader_ptr != nil {
+		if shader_ptr.module != nil {
+			wgpu.ShaderModuleRelease(shader_ptr.module)
+			shader_ptr.module = nil
+		}
+		free(shader_ptr, allocator)
+	}
+}
 
 wgpu_error_callback :: proc "c" (
 	device: ^wgpu.Device,
@@ -147,13 +364,48 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 		config   = config,
 	}
 
+	pbr_config := Pbr_Config {
+		lights       = {
+			{position = {5.0, 5.0, 5.0}, intensity = 1.0, color = {1.0, 1.0, 1.0}, radius = 20.0},
+			{
+				position = {-5.0, 5.0, -5.0},
+				intensity = 0.5,
+				color = {0.8, 0.9, 1.0},
+				radius = 20.0,
+			},
+			{},
+			{},
+		},
+		num_lights   = 2,
+		roughness    = 0.4,
+		metallic     = 0.5,
+		ao           = 1.0,
+		antialiasing = .MSAA_4x,
+	}
+
+	recreate_msaa_texture(&render_ctx, u32(pbr_config.antialiasing))
+
 	app.app_add_resource(a, render_ctx)
+	app.app_add_resource(a, pbr_config)
 	app.app_add_resource(a, Frame_Context{})
 	app.app_add_resource(a, Clear_Color{})
 
-	batch2d := init_batch2d(req_data.device, config.format)
+	render_ctx_ptr := ecs.world_get_resource(&a.world, Render_Context)
+	global_render_context = render_ctx_ptr
+
+	batch2d := init_batch2d(
+		req_data.device,
+		config.format,
+		nil,
+		u32(pbr_config.antialiasing),
+	)
 	app.app_add_resource(a, batch2d)
-	batch3d := init_batch3d(req_data.device, config.format)
+	batch3d := init_batch3d(
+		req_data.device,
+		config.format,
+		nil,
+		u32(pbr_config.antialiasing),
+	)
 	app.app_add_resource(a, batch3d)
 
 	// Set up Asset Loaders if AssetServer exists
@@ -253,6 +505,29 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 		mtl_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(asset.Materials))
 		asset.asset_server_register(server, mtl_mgr_ptr)
 		asset.asset_server_register_extension(server, ".mtl", typeid_of(asset.Materials))
+
+		// Register Shader manager on the fly
+		shader_mgr: asset.AssetManager(Shader_Asset)
+		asset.asset_manager_init(
+			&shader_mgr,
+			asset.AssetLoader{load = shader_loader_proc, destroy = shader_destroy_proc},
+			a.world.allocator,
+		)
+		ecs.world_add_resource(
+			&a.world,
+			shader_mgr,
+			proc(m: ^asset.AssetManager(Shader_Asset), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+		shader_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(Shader_Asset))
+		asset.asset_server_register(server, shader_mgr_ptr)
+		asset.asset_server_register_extension(server, ".wgsl", typeid_of(Shader_Asset))
+
+		// Register embedded shaders
+		asset.asset_server_register_embedded(server, "game://shaders/pbr_math.wgsl", #load("embed_assets/pbr_math.wgsl"))
+		asset.asset_server_register_embedded(server, "game://shaders/pbr.wgsl", #load("embed_assets/pbr.wgsl"))
+		asset.asset_server_register_embedded(server, "game://shaders/default_3d.wgsl", #load("embed_assets/default_3d.wgsl"))
 	}
 
 	app.app_add_system(a, app.PreUpdate, camera.auto_transform_system)
@@ -290,6 +565,15 @@ render_cleanup_system :: proc(
 		}
 
 		if render_ctx.ptr != nil {
+			if render_ctx.ptr.msaa_view != nil {
+				wgpu.TextureViewRelease(render_ctx.ptr.msaa_view)
+				render_ctx.ptr.msaa_view = nil
+			}
+			if render_ctx.ptr.msaa_texture != nil {
+				wgpu.TextureRelease(render_ctx.ptr.msaa_texture)
+				render_ctx.ptr.msaa_texture = nil
+			}
+
 			// Surface must be released BEFORE Queue, Device, Adapter, and Instance
 			if render_ctx.ptr.surface != nil {
 				wgpu.SurfaceRelease(render_ctx.ptr.surface)

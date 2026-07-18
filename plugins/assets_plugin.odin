@@ -48,6 +48,50 @@ register_assets_param_builder :: proc(w: ^ecs.World) {
 	})
 }
 
+import log "../logging"
+import "core:strings"
+
+asset_event_dispatcher_system :: proc(
+	server_res: params.Res(asset.AssetServer),
+	event_writer: params.EventWriter(asset.Asset_Event),
+) {
+	server := server_res.ptr
+	if server == nil do return
+
+	sync.mutex_lock(&server.mutex)
+	if len(server.loaded_queue) == 0 {
+		sync.mutex_unlock(&server.mutex)
+		return
+	}
+
+	for ev in server.loaded_queue {
+		params.write(event_writer, ev)
+	}
+	clear(&server.loaded_queue)
+	sync.mutex_unlock(&server.mutex)
+}
+
+clear_embedded_assets_system :: proc(
+	events: params.EventReader(asset.Asset_Event),
+	server_res: params.Res(asset.AssetServer),
+) {
+	server := server_res.ptr
+	if server == nil do return
+
+	for event in events.events {
+		#partial switch ev in event {
+		case asset.Asset_Loaded:
+			if strings.has_suffix(ev.path, "pbr.wgsl") {
+				asset.asset_server_clear_embedded(server)
+				log.info(
+					"Asset System: Shaders loaded, automatically cleared embedded assets registry.",
+				)
+			}
+		}
+	}
+}
+
+import "../ecs/params"
 import errors "../errors"
 
 Assets_Plugin :: proc() -> app.Plugin {
@@ -64,6 +108,9 @@ Assets_Plugin :: proc() -> app.Plugin {
 			)
 
 			register_assets_param_builder(&a.world)
+
+			app.app_add_system(a, app.PreUpdate, asset_event_dispatcher_system)
+			app.app_add_system(a, app.PreUpdate, clear_embedded_assets_system)
 			return {}, true
 		}, destroy = nil}
 }

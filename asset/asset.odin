@@ -2,6 +2,7 @@ package asset
 
 import errors "../errors"
 import "base:runtime"
+import "core:bytes"
 import "core:fmt"
 import "core:hash"
 import "core:io"
@@ -23,6 +24,15 @@ AssetId :: struct($T: typeid) {
 Asset_Entry :: struct($T: typeid) {
 	id:    AssetId(T),
 	asset: T,
+}
+
+Asset_Loaded :: struct {
+	path: string,
+	id:   UntypedAssetId,
+}
+
+Asset_Event :: union {
+	Asset_Loaded,
 }
 
 
@@ -212,6 +222,8 @@ AssetServer :: struct {
 	managers:        map[typeid]IAssetManager,
 	extension_types: map[string]typeid,
 	allocator:       runtime.Allocator,
+	embedded_assets: map[string][]byte,
+	loaded_queue:    [dynamic]Asset_Loaded,
 }
 
 asset_server_init :: proc(server: ^AssetServer, allocator := context.allocator) {
@@ -219,6 +231,8 @@ asset_server_init :: proc(server: ^AssetServer, allocator := context.allocator) 
 	asset_schema_registry_init(&server.registry, allocator)
 	server.managers = make(map[typeid]IAssetManager, allocator)
 	server.extension_types = make(map[string]typeid, allocator)
+	server.embedded_assets = make(map[string][]byte, allocator)
+	server.loaded_queue = make([dynamic]Asset_Loaded, allocator)
 }
 
 asset_server_destroy :: proc(server: ^AssetServer) {
@@ -228,6 +242,20 @@ asset_server_destroy :: proc(server: ^AssetServer) {
 	}
 	delete(server.managers)
 	delete(server.extension_types)
+	delete(server.embedded_assets)
+	delete(server.loaded_queue)
+}
+
+asset_server_register_embedded :: proc(server: ^AssetServer, path: string, data: []byte) {
+	sync.mutex_lock(&server.mutex)
+	defer sync.mutex_unlock(&server.mutex)
+	server.embedded_assets[path] = data
+}
+
+asset_server_clear_embedded :: proc(server: ^AssetServer) {
+	sync.mutex_lock(&server.mutex)
+	defer sync.mutex_unlock(&server.mutex)
+	clear(&server.embedded_assets)
 }
 
 asset_manager_populate_slice :: proc(
@@ -328,6 +356,7 @@ asset_server_load :: proc(
 	path: AssetPath,
 	$T: typeid,
 	settings: rawptr = nil,
+	caller_location := #caller_location,
 ) -> errors.Result(^T, errors.Error) {
 	resolved, id, ok := asset_schemas_resolve(&server.registry, path)
 	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Path_Not_Resolved)}
@@ -348,17 +377,49 @@ asset_server_load :: proc(
 	sync.mutex_unlock(&mgr.mutex)
 
 	f, f_err := os.open(resolved)
-	if f_err != nil do return errors.Err(errors.Error){error = errors.from_payload(AssetError.File_Open_Error)}
-	defer os.close(f)
+	reader: io.Reader
+	opened := false
+	if f_err == nil {
+		opened = true
+		reader = io.to_reader(os.to_stream(f))
+	} else {
+		sync.mutex_lock(&server.mutex)
+		embed_data, found_embed := server.embedded_assets[string(path)]
+		if !found_embed {
+			embed_data, found_embed = server.embedded_assets[resolved]
+		}
+		sync.mutex_unlock(&server.mutex)
 
-	reader := io.to_reader(os.to_stream(f))
-	return asset_server_load_by_id(server, AssetId(T){id = id}, reader, settings)
+		if found_embed {
+			r: bytes.Reader
+			bytes.reader_init(&r, embed_data)
+			reader = bytes.reader_to_stream(&r)
+		} else {
+			return errors.Err(errors.Error) {
+				error = errors.from_payload(
+					AssetError.File_Open_Error,
+					location = caller_location,
+				),
+			}
+		}
+	}
+	defer if opened do os.close(f)
+
+	res := asset_server_load_by_id(server, AssetId(T){id = id}, reader, settings)
+	#partial switch r in res {
+	case errors.Ok(^T):
+		sync.mutex_lock(&server.mutex)
+		append(&server.loaded_queue, Asset_Loaded{path = string(path), id = id})
+		sync.mutex_unlock(&server.mutex)
+	}
+	return res
 }
 
 asset_server_load_untyped :: proc(
 	server: ^AssetServer,
 	path: AssetPath,
 	settings: rawptr = nil,
+	caller_location := #caller_location,
 ) -> errors.Result(rawptr, errors.Error) {
 	resolved, id, ok := asset_schemas_resolve(&server.registry, path)
 	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Path_Not_Resolved)}
@@ -379,9 +440,40 @@ asset_server_load_untyped :: proc(
 	mgr_ptr := mgr_val.manager_ptr
 
 	f, f_err := os.open(resolved)
-	if f_err != nil do return errors.Err(errors.Error){error = errors.from_payload(AssetError.File_Open_Error)}
-	defer os.close(f)
+	reader: io.Reader
+	opened := false
+	if f_err == nil {
+		opened = true
+		reader = io.to_reader(os.to_stream(f))
+	} else {
+		sync.mutex_lock(&server.mutex)
+		embed_data, found_embed := server.embedded_assets[string(path)]
+		if !found_embed {
+			embed_data, found_embed = server.embedded_assets[resolved]
+		}
+		sync.mutex_unlock(&server.mutex)
 
-	reader := io.to_reader(os.to_stream(f))
-	return mgr_val.load_asset(mgr_ptr, id, reader, settings)
+		if found_embed {
+			r: bytes.Reader
+			bytes.reader_init(&r, embed_data)
+			reader = bytes.reader_to_stream(&r)
+		} else {
+			return errors.Err(errors.Error) {
+				error = errors.from_payload(
+					AssetError.File_Open_Error,
+					location = caller_location,
+				),
+			}
+		}
+	}
+	defer if opened do os.close(f)
+
+	res := mgr_val.load_asset(mgr_ptr, id, reader, settings)
+	#partial switch r in res {
+	case errors.Ok(rawptr):
+		sync.mutex_lock(&server.mutex)
+		append(&server.loaded_queue, Asset_Loaded{path = string(path), id = id})
+		sync.mutex_unlock(&server.mutex)
+	}
+	return res
 }

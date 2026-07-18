@@ -13,6 +13,8 @@ Render_Context :: struct {
 	device:   wgpu.Device, // Logical GPU connection for resource creation.
 	queue:    wgpu.Queue, // Command queue to submit work to the GPU.
 	config:   wgpu.SurfaceConfiguration, // Display/format configuration for the render surface.
+	msaa_texture: wgpu.Texture,
+	msaa_view:    wgpu.TextureView,
 }
 
 // Frame_Context stores transient, per-frame resources used to record and encode
@@ -63,6 +65,12 @@ Vertex3D :: struct {
 	color:    [4]f32, // Normalized RGBA color coordinates [0.0 - 1.0].
 }
 
+
+// Shader_Asset represents a compiled shader module stored on the GPU.
+Shader_Asset :: struct {
+	module: wgpu.ShaderModule,
+}
+
 // Shader_Source_WGSL holds a WGSL shader source string.
 Shader_Source_WGSL :: struct {
 	code: string,
@@ -111,6 +119,7 @@ Shader_Pass :: struct {
 	type:              Shader_Pass_Type, // Whether this is a Render or Compute pass.
 	label:             string, // Human-readable identifier for debugging.
 	shader_module:     wgpu.ShaderModule, // Compiled WGSL shader module.
+	own_module:        bool,             // Whether this pass owns the shader module and should release it on destroy.
 	render_pipeline:   wgpu.RenderPipeline, // Compiled render pipeline (valid if type is Render).
 	compute_pipeline:  wgpu.ComputePipeline, // Compiled compute pipeline (valid if type is Compute).
 	uniform_buf:       wgpu.Buffer, // Unified GPU uniform buffer for uniform variables.

@@ -34,7 +34,7 @@ unwrap :: proc(rs: Result($T, $E)) -> T {
 	switch v in rs {
 	case Err(E):
 		err := rs.(Err(E))
-		fmt.panicf("Attempt to unrap Result.Err with message: `%s`", err.error)
+		fmt.panicf("Attempt to unwrap Result.Err with message: `%s`", err.error)
 	case Ok(T):
 		ok := rs.(Ok(T))
 		return ok.value
