@@ -886,17 +886,19 @@ custom_fonts_get :: proc(path: string, pixel_height: f32) -> (^Font, bool) {
 
 	font: Font
 	if !font_init(&font, path, pixel_height) {
-		custom_fonts[path] = Custom_Font_Cache_Entry {
+		cloned_path := strings.clone(path)
+		custom_fonts[cloned_path] = Custom_Font_Cache_Entry {
 			exists = false,
 		}
 		return nil, false
 	}
 
-	custom_fonts[path] = Custom_Font_Cache_Entry {
+	cloned_path := strings.clone(path)
+	custom_fonts[cloned_path] = Custom_Font_Cache_Entry {
 		font   = font,
 		exists = true,
 	}
-	entry, _ := &custom_fonts[path]
+	entry, _ := &custom_fonts[cloned_path]
 	return &entry.font, true
 }
 
@@ -906,6 +908,7 @@ custom_fonts_destroy :: proc() {
 		if entry.exists {
 			font_destroy(&entry.font)
 		}
+		delete(path)
 	}
 	delete(custom_fonts)
 	custom_fonts = nil

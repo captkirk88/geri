@@ -83,7 +83,7 @@ clear_embedded_assets_system :: proc(
 		case asset.Asset_Loaded:
 			if strings.has_suffix(ev.path, "pbr.wgsl") {
 				asset.asset_server_clear_embedded(server)
-				log.info(
+				log.debug(
 					"Asset System: Shaders loaded, automatically cleared embedded assets registry.",
 				)
 			}

@@ -228,7 +228,6 @@ shader_destroy_proc :: proc(asset_ptr: rawptr, allocator: runtime.Allocator) {
 			wgpu.ShaderModuleRelease(shader_ptr.module)
 			shader_ptr.module = nil
 		}
-		free(shader_ptr, allocator)
 	}
 }
 
@@ -534,7 +533,8 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 	app.app_add_system(a, app.PreRender, frame_start_system)
 	app.app_add_system(a, app.Render, main_render_system)
 	app.app_add_system(a, app.PostRender, frame_present_system)
-	app.app_add_system(a, app.Last, render_cleanup_system)
+	render_cleanup_deps := []app.System_Dependency{rawptr(windowing.window_cleanup_system)}
+	app.app_add_system(a, app.Last, render_cleanup_system, before = render_cleanup_deps)
 	app.app_add_system(a, app.First, handle_resize_system) // To resize surface
 	return {}, true
 }

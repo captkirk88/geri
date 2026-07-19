@@ -110,12 +110,17 @@ world_destroy :: proc(w: ^World) {
 		arch_deinit(arch)
 		free(arch, w.allocator)
 	}
+	// Pass 1: Destroy all resources
 	for tid, ptr in w.resources {
 		if dest, ok := w.resource_destructors[tid]; ok {
 			if dest.destroy_proc != nil && dest.wrapper != nil {
 				dest.wrapper(dest.destroy_proc, ptr, w.allocator)
 			}
 		}
+	}
+
+	// Pass 2: Free resource memory blocks
+	for _, ptr in w.resources {
 		free(ptr, w.allocator)
 	}
 	for _, links in w.target_index {

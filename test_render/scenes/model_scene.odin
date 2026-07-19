@@ -779,12 +779,11 @@ model_draw_system :: proc(
 		h := f32(win_h)
 		ui_vp := linalg.matrix_ortho3d_f32(-w / 2, w / 2, -h / 2, h / 2, -1.0, 1.0)
 
-		pbr_str :=
-			"[color=green]Active[/color]" if use_pbr else "[color=red]Disabled (No PBR Shader loaded)[/color]"
+		pbr_str := "[c=green]Yes[/c]" if use_pbr else "[c=red]No[/c]"
 		graphics.draw_text(
 			batch2d.ptr,
 			fmt.tprintf(
-				"Scene 3: [color=orange]3D PBR Models[/color] (%s). Press ESC to switch scene.",
+				"Scene 3: [c=orange]3D PBR Models[/c] (%s). Press ESC to switch scene.",
 				pbr_str,
 			),
 			-350 * ui_scale,
@@ -816,7 +815,7 @@ model_draw_system :: proc(
 		)
 		graphics.draw_text(
 			batch2d.ptr,
-			"Drag Mouse/Touch or use Gamepad Sticks to Rotate",
+			"Drag Mouse/Touch or use Gamepad Sticks to Rotate Wolf",
 			-350 * ui_scale,
 			-260 * ui_scale,
 			font,

@@ -5,6 +5,7 @@ import transform "../transform"
 import "base:runtime"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:os"
 import "core:time"
 
@@ -104,12 +105,12 @@ scene_transition_system :: proc(
 
 	if should_transition {
 		// Exit current scene
-		log.info("Calling exit for scene index %d", mgr.current_scene_idx)
+		log.debug("Calling exit for scene index %d", mgr.current_scene_idx)
 		exit_err, exit_ok := scenes_list[mgr.current_scene_idx].exit(world)
 		if !exit_ok {
 			log.error("Error exiting scene index %d: %v", mgr.current_scene_idx, exit_err)
 		}
-		log.info("Exit complete for scene index %d", mgr.current_scene_idx)
+		log.debug("Exit complete for scene index %d", mgr.current_scene_idx)
 
 		if mgr.current_scene_idx == len(scenes_list) - 1 {
 			log.info("Finished last scene.")
@@ -228,6 +229,26 @@ camera_resize_system :: proc(
 }
 
 main :: proc() {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+	context.allocator = mem.tracking_allocator(&track)
+
+	defer {
+		if len(track.allocation_map) > 0 {
+			log.error("=== Memory Leaks ===")
+			for _, entry in track.allocation_map {
+				log.error("- %v bytes leaked @ %v", entry.size, entry.location)
+			}
+		}
+		if len(track.bad_free_array) > 0 {
+			log.error("=== Bad Frees ===")
+			for entry in track.bad_free_array {
+				log.error("- Bad free @ %v", entry.location)
+			}
+		}
+	}
+
 	args := os.args
 	duration := 15 * time.Second
 	start_scene_idx := 0

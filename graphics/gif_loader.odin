@@ -120,7 +120,7 @@ sprite_animation_loader_proc :: proc(
 		copy(frame_img.pixels.buf[:], stb_pixels[offset : offset + frame_size])
 
 		// Generate a unique dummy asset path/ID for each frame
-		frame_path := fmt.tprintf("generated://frame_%d_%d", frame_img.width, offset)
+		frame_path := fmt.tprintf("generated://frame_%p_%d", anim, offset)
 		hash_val := hash.fnv64a(transmute([]u8)frame_path)
 		frame_id := asset.AssetId(image.Image){id = {value = hash_val}}
 
