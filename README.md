@@ -45,10 +45,14 @@ mise test-ui-3d
 mise test-shader
 ```
 
-### Circles/Text (bbcode formatted)
+### Test Render Scenes
 
 ```bash
 mise test-render
+
+# or
+
+mise test-render -- -- Models 10m
 ```
 
 ### License
