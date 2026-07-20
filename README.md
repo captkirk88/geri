@@ -59,19 +59,4 @@ mise test-render -- -- Models 10m
 
 Source code is under MIT. See [LICENSE](LICENSE) for details.
 
-The following files are released under the CC0 1.0 Universal.
-
-blob.attack.gif
-
-blob.idle.gif
-
-blob.walk.gif
-
-test_assets/textures/Wolf_Body.jpg
-
-test_assets/textures/Wolf_Eyes_1.jpg
-
-test_assets/textures/Wolf_Eyes_2.jpg
-
-test_assets/textures/Wolf_Fur.jpg
-
+Test Assets [LICENSES](test_assets/LICENSES)
