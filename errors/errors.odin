@@ -12,6 +12,10 @@ Error :: struct {
 	cause:    ^Error,
 }
 
+none :: proc() -> Error {
+	return Error{}
+}
+
 new :: proc(
 	message: string,
 	payload: any = nil,

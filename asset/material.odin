@@ -50,7 +50,7 @@ materials_destroy :: proc(lib: ^Materials, allocator: runtime.Allocator) {
 }
 
 material_loader_proc :: proc(
-	reader: io.Reader,
+	ctx: ^Load_Context,
 	settings: rawptr,
 	allocator: runtime.Allocator,
 ) -> errors.Result(rawptr, errors.Error) {
@@ -58,7 +58,7 @@ material_loader_proc :: proc(
 	lib.materials = make(map[string]Material, allocator)
 
 	scanner: bufio.Scanner
-	bufio.scanner_init(&scanner, reader, context.temp_allocator)
+	bufio.scanner_init(&scanner, ctx.reader, context.temp_allocator)
 	defer bufio.scanner_destroy(&scanner)
 
 	current_mat: ^Material = nil

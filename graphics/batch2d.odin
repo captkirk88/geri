@@ -32,7 +32,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 // init_batch2d initializes a 2D batching context, creating CPU dynamic arrays
 // and the default WGPU Render Pipeline. An optional shader source can be provided
 // to override the built-in default WGSL shader.
-init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Shader_Source = nil, multisample_count: u32 = 1) -> Batch2D {
+init_batch2d :: proc(
+	device: wgpu.Device,
+	format: wgpu.TextureFormat,
+	source: Shader_Source = nil,
+	multisample_count: u32 = 1,
+) -> Batch2D {
 	batch := Batch2D{}
 	batch.vertices = make([dynamic]Vertex2D)
 	batch.indices = make([dynamic]u32)
@@ -42,7 +47,9 @@ init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Sh
 	if source != nil {
 		effective_source = source
 	} else {
-		effective_source = Shader_Source_WGSL{code = DEFAULT_SHADER_2D}
+		effective_source = Shader_Source_WGSL {
+			code = DEFAULT_SHADER_2D,
+		}
 	}
 	shader := shader_module_from_source(device, effective_source)
 	defer wgpu.ShaderModuleRelease(shader)
@@ -83,6 +90,12 @@ init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Sh
 		targets     = &color_target,
 	}
 
+	depth_stencil_state := wgpu.DepthStencilState {
+		format = .Depth24Plus,
+		depthWriteEnabled = .False,
+		depthCompare = .Always,
+	}
+
 	pipeline_desc := wgpu.RenderPipelineDescriptor {
 		layout = pipeline_layout,
 		vertex = {
@@ -92,7 +105,12 @@ init_batch2d :: proc(device: wgpu.Device, format: wgpu.TextureFormat, source: Sh
 			buffers = &vertex_buffer_layout,
 		},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
-		multisample = {count = multisample_count, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		multisample = {
+			count = multisample_count,
+			mask = 0xFFFFFFFF,
+			alphaToCoverageEnabled = false,
+		},
+		depthStencil = &depth_stencil_state,
 		fragment = &fragment_state,
 	}
 
@@ -205,12 +223,12 @@ batch2d_draw_buffers :: proc(batch: ^Batch2D, pass: wgpu.RenderPassEncoder, inde
 	vert_size := u64(len(batch.vertices) * size_of(Vertex2D))
 	if vert_size == 0 do vert_size = u64(batch.vert_buf_cap)
 	call := Indexed_Draw_Call {
-		pipeline = pipeline,
-		bind_group = bind_group,
-		vertex_buf = batch.vertex_buf,
+		pipeline    = pipeline,
+		bind_group  = bind_group,
+		vertex_buf  = batch.vertex_buf,
 		vertex_size = vert_size,
-		index_buf = batch.index_buf,
-		index_size = u64(batch.ind_buf_cap),
+		index_buf   = batch.index_buf,
+		index_size  = u64(batch.ind_buf_cap),
 		index_count = index_count,
 	}
 	render_draw_indexed_call(pass, call)
@@ -374,4 +392,8 @@ batch2d_clip_quad :: proc(batch: ^Batch2D, x0, y0, x1, y1: ^f32) -> bool {
 	y1^ = clamp(y1^, cy0, cy1)
 
 	return abs(x1^ - x0^) > 0.0001 && abs(y1^ - y0^) > 0.0001
+}
+
+batch2d_draw :: proc {
+	batch2d_draw_buffers,
 }

@@ -1,6 +1,8 @@
 package graphics
 
+import asset "../asset"
 import "../ecs/params"
+import "core:math/linalg"
 import "core:mem"
 import "vendor:wgpu"
 
@@ -60,14 +62,16 @@ init_batch3d :: proc(
 	defer wgpu.PipelineLayoutRelease(pipeline_layout)
 
 	// Vertex Layout
-	vertex_attributes := [2]wgpu.VertexAttribute {
+	vertex_attributes := [4]wgpu.VertexAttribute {
 		{format = .Float32x3, offset = 0, shaderLocation = 0},
 		{format = .Float32x4, offset = 12, shaderLocation = 1},
+		{format = .Float32x2, offset = 28, shaderLocation = 2},
+		{format = .Float32x3, offset = 36, shaderLocation = 3},
 	}
 	vertex_buffer_layout := wgpu.VertexBufferLayout {
 		arrayStride    = size_of(Vertex3D),
 		stepMode       = .Vertex,
-		attributeCount = 2,
+		attributeCount = 4,
 		attributes     = &vertex_attributes[0],
 	}
 
@@ -90,6 +94,12 @@ init_batch3d :: proc(
 		targets     = &color_target,
 	}
 
+	depth_stencil_state := wgpu.DepthStencilState {
+		format = .Depth24Plus,
+		depthWriteEnabled = .True,
+		depthCompare = .Less,
+	}
+
 	pipeline_desc := wgpu.RenderPipelineDescriptor {
 		layout = pipeline_layout,
 		vertex = {
@@ -99,7 +109,12 @@ init_batch3d :: proc(
 			buffers = &vertex_buffer_layout,
 		},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .Back},
-		multisample = {count = multisample_count, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		multisample = {
+			count = multisample_count,
+			mask = 0xFFFFFFFF,
+			alphaToCoverageEnabled = false,
+		},
+		depthStencil = &depth_stencil_state,
 		fragment = &fragment_state,
 	}
 
@@ -108,6 +123,7 @@ init_batch3d :: proc(
 	batch.ind_buf_cap = 0
 	batch.shader_passes = make([dynamic]Shader_Pass)
 	batch.active_pass_idx = -1
+	batch.commands = make([dynamic]Draw_Command)
 	return batch
 }
 
@@ -135,6 +151,8 @@ destroy_batch3d :: proc(batch: ^Batch3D) {
 	batch.vertices = nil
 	delete(batch.indices)
 	batch.indices = nil
+	delete(batch.commands)
+	batch.commands = nil
 }
 
 // batch3d_prepare_buffers ensures GPU buffers are correctly allocated and copies
@@ -194,33 +212,95 @@ batch3d_prepare_buffers :: proc(batch: ^Batch3D, ctx: ^Render_Context) {
 
 // batch3d_draw_buffers issues draw commands for the batch's current GPU buffer contents,
 // using either the default pipeline or the active custom render pass (and its uniforms).
-batch3d_draw_buffers :: proc(batch: ^Batch3D, pass: wgpu.RenderPassEncoder, index_count: u32) {
+batch3d_draw_buffers :: proc(
+	batch: ^Batch3D,
+	ctx: ^Render_Context,
+	pass: wgpu.RenderPassEncoder,
+	index_count: u32,
+) {
 	if batch.vertex_buf == nil || batch.index_buf == nil || index_count == 0 do return
 
 	pipeline := batch.pipeline
 	bind_group: wgpu.BindGroup = nil
 
 	// Check if there is an active custom Render shader pass
+	has_custom_pass := false
+	sp: ^Shader_Pass = nil
 	if batch.active_pass_idx >= 0 && batch.active_pass_idx < len(batch.shader_passes) {
-		sp := batch.shader_passes[batch.active_pass_idx]
+		sp = &batch.shader_passes[batch.active_pass_idx]
 		if sp.type == .Render && sp.render_pipeline != nil {
 			pipeline = sp.render_pipeline
 			bind_group = sp.bind_group
+			has_custom_pass = true
 		}
 	}
 
 	vert_size := u64(len(batch.vertices) * size_of(Vertex3D))
 	if vert_size == 0 do vert_size = u64(batch.vert_buf_cap)
-	call := Indexed_Draw_Call {
-		pipeline    = pipeline,
-		bind_group  = bind_group,
-		vertex_buf  = batch.vertex_buf,
-		vertex_size = vert_size,
-		index_buf   = batch.index_buf,
-		index_size  = u64(batch.ind_buf_cap),
-		index_count = index_count,
+
+	if len(batch.commands) > 0 && has_custom_pass && sp != nil {
+		for cmd in batch.commands {
+			if cmd.index_count == 0 do continue
+
+			draw_pipeline := pipeline
+			if cmd.pipeline != nil {
+				draw_pipeline = cmd.pipeline
+			}
+
+			if cmd.mesh != nil {
+				call := Indexed_Draw_Call {
+					pipeline    = draw_pipeline,
+					bind_group  = cmd.bind_group,
+					vertex_buf  = cmd.mesh.vertex_buffer,
+					vertex_size = u64(cmd.mesh.vertex_count * size_of(SkinnedVertex3D)),
+					index_buf   = cmd.mesh.index_buffer,
+					index_size  = u64(cmd.mesh.index_count * size_of(u32)),
+					index_count = cmd.index_count,
+					first_index = cmd.index_start,
+					base_vertex = 0,
+				}
+				render_draw_indexed_call(pass, call)
+				continue
+			}
+
+			// Bind specific texture
+			if cmd.texture != nil && ctx != nil {
+				tex_view := wgpu.TextureCreateView(cmd.texture, nil)
+				pbr_rebuild_bind_group(ctx.device, sp, tex_view, ctx.default_sampler)
+				wgpu.TextureViewRelease(tex_view)
+			} else if ctx != nil {
+				// Revert to fallback 1x1 white texture view so we don't bleed previous textures
+				fallback_tex, fallback_view := create_fallback_texture(ctx.device, ctx.queue)
+				pbr_rebuild_bind_group(ctx.device, sp, fallback_view, ctx.default_sampler)
+				wgpu.TextureViewRelease(fallback_view)
+				wgpu.TextureRelease(fallback_tex)
+			}
+
+			call := Indexed_Draw_Call {
+				pipeline    = draw_pipeline,
+				bind_group  = sp.bind_group,
+				vertex_buf  = batch.vertex_buf,
+				vertex_size = vert_size,
+				index_buf   = batch.index_buf,
+				index_size  = u64(batch.ind_buf_cap),
+				index_count = cmd.index_count,
+				first_index = cmd.index_start,
+				base_vertex = 0,
+			}
+			render_draw_indexed_call(pass, call)
+		}
+	} else {
+		call := Indexed_Draw_Call {
+			pipeline    = pipeline,
+			bind_group  = bind_group,
+			vertex_buf  = batch.vertex_buf,
+			vertex_size = vert_size,
+			index_buf   = batch.index_buf,
+			index_size  = u64(batch.ind_buf_cap),
+			index_count = index_count,
+		}
+		render_draw_indexed_call(pass, call)
 	}
-	render_draw_indexed_call(pass, call)
 }
 
 // batch3d_flush prepares WGPU buffers with the current CPU vertices, draws them,
@@ -229,11 +309,12 @@ batch3d_flush :: proc(batch: ^Batch3D, ctx: ^Render_Context, pass: wgpu.RenderPa
 	if len(batch.indices) == 0 do return
 
 	batch3d_prepare_buffers(batch, ctx)
-	batch3d_draw_buffers(batch, pass, u32(len(batch.indices)))
+	batch3d_draw_buffers(batch, ctx, pass, u32(len(batch.indices)))
 
 	// Clear dynamic CPU buffers after draw
 	clear(&batch.vertices)
 	clear(&batch.indices)
+	clear(&batch.commands)
 }
 
 // batch3d_run_compute executes a Compute Shader Pass on the batch's vertex and index buffers.
@@ -332,4 +413,36 @@ batch3d_add_shader_pass :: proc(batch: ^Batch3D, pass: Shader_Pass) -> int {
 // batch3d_set_active_pass sets the active shader pass index. Set to -1 to use default rendering.
 batch3d_set_active_pass :: proc(batch: ^Batch3D, pass_idx: int) {
 	batch.active_pass_idx = pass_idx
+}
+
+batch3d_draw_gltf_model_hierarchical :: proc(
+	batch: ^Batch3D,
+	model: ^asset.Gltf_Data,
+	color: [4]f32,
+	vp: linalg.Matrix4f32,
+	model_m4: linalg.Matrix4f32,
+	use_pbr: bool,
+	textures: []asset.Asset_Entry(wgpu.Texture),
+	config: Gltf_Render_Config = {},
+) {
+	draw_gltf_model_hierarchical(batch, model, color, vp, model_m4, use_pbr, textures, config)
+}
+
+batch3d_draw_skinned_submeshes :: proc(
+	batch: ^Batch3D,
+	device: wgpu.Device,
+	queue: wgpu.Queue,
+	model: ^asset.Gltf_Data,
+	submeshes: []SkinnedSubMesh,
+	base_uniforms: Pbr_Uniforms,
+	model_m4: linalg.Matrix4f32,
+	pipeline: wgpu.RenderPipeline,
+) {
+	draw_skinned_submeshes(batch, device, queue, model, submeshes, base_uniforms, model_m4, pipeline)
+}
+
+batch3d_draw :: proc {
+	batch3d_draw_gltf_model_hierarchical,
+	batch3d_draw_skinned_submeshes,
+	batch3d_draw_buffers,
 }

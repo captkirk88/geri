@@ -17,6 +17,8 @@ Indexed_Draw_Call :: struct {
 	index_buf:   wgpu.Buffer,
 	index_size:  u64,
 	index_count: u32,
+	first_index: u32,
+	base_vertex: i32,
 }
 
 // Create a static GPU buffer with the given usage flags and data, returning the created buffer.
@@ -89,7 +91,7 @@ render_draw_indexed_call :: proc(pass: wgpu.RenderPassEncoder, call: Indexed_Dra
 	}
 	wgpu.RenderPassEncoderSetVertexBuffer(pass, 0, call.vertex_buf, 0, call.vertex_size)
 	wgpu.RenderPassEncoderSetIndexBuffer(pass, call.index_buf, .Uint32, 0, call.index_size)
-	wgpu.RenderPassEncoderDrawIndexed(pass, call.index_count, 1, 0, 0, 0)
+	wgpu.RenderPassEncoderDrawIndexed(pass, call.index_count, 1, call.first_index, call.base_vertex, 0)
 }
 
 // Render a single indexed draw call using the provided render pass encoder and a bind group created from the provided layout and entries
@@ -148,11 +150,17 @@ render_create_pipeline :: proc(
 		targets     = &mutable_target,
 	}
 	v_layout := vertex_layout
+	depth_stencil_state := wgpu.DepthStencilState {
+		format = .Depth24Plus,
+		depthWriteEnabled = .False,
+		depthCompare = .Always,
+	}
 	pipeline_desc := wgpu.RenderPipelineDescriptor {
 		layout = layout,
 		vertex = {module = shader, entryPoint = "vs_main", bufferCount = 1, buffers = &v_layout},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
 		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		depthStencil = &depth_stencil_state,
 		fragment = &fragment_state,
 	}
 
@@ -221,10 +229,22 @@ begin_frame_render_pass :: proc(
 		depthSlice    = wgpu.DEPTH_SLICE_UNDEFINED,
 		resolveTarget = resolve_target,
 	}
+	actual_depth_stencil := depth_stencil
+	local_depth_stencil: wgpu.RenderPassDepthStencilAttachment
+	if actual_depth_stencil == nil && ctx != nil && ctx.depth_view != nil {
+		local_depth_stencil = wgpu.RenderPassDepthStencilAttachment {
+			view = ctx.depth_view,
+			depthLoadOp = load_op == .Clear ? .Clear : .Load,
+			depthStoreOp = store_op,
+			depthClearValue = 1.0,
+		}
+		actual_depth_stencil = &local_depth_stencil
+	}
+
 	pass_desc := wgpu.RenderPassDescriptor {
 		colorAttachmentCount   = 1,
 		colorAttachments       = &color_attachment,
-		depthStencilAttachment = depth_stencil,
+		depthStencilAttachment = actual_depth_stencil,
 	}
 	return wgpu.CommandEncoderBeginRenderPass(fctx.encoder, &pass_desc)
 }

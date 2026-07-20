@@ -2,6 +2,7 @@ package asset
 
 import errors "../errors"
 import "base:runtime"
+import "core:fmt"
 import "core:io"
 import linalg "core:math/linalg"
 import "core:os"
@@ -15,12 +16,12 @@ TextAsset :: struct {
 
 @(private)
 text_loader_proc :: proc(
-	reader: io.Reader,
+	ctx: ^Load_Context,
 	settings: rawptr,
 	allocator: runtime.Allocator,
 ) -> errors.Result(rawptr, errors.Error) {
 	buf: [1024]u8
-	n, err := io.read(reader, buf[:])
+	n, err := io.read(ctx.reader, buf[:])
 	if err != nil && err != .EOF do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Loader_Error)}
 
 	asset_val := new(TextAsset, allocator)
@@ -39,11 +40,6 @@ test_asset_lifecycle :: proc(t: ^testing.T) {
 		load = text_loader_proc,
 	}
 	asset_manager_init(&mgr, loader)
-	defer {
-		for _, val in mgr.assets {
-			delete(val.content, mgr.allocator)
-		}
-	}
 	asset_server_register(&server, &mgr)
 
 	asset_schemas_register(&server.registry, "mods", "test_base")
@@ -63,19 +59,17 @@ test_asset_lifecycle :: proc(t: ^testing.T) {
 	defer os.remove(file_path)
 
 	// Load typed
-	res := asset_server_load(&server, "mods://hello.txt", TextAsset)
-	testing.expect(t, errors.is_ok(res))
-	asset_ptr := errors.unwrap(res)
-	testing.expect(t, asset_ptr != nil)
-	testing.expect_value(t, asset_ptr.content, "Hello Geri!")
+	hello_data, hello_id, hello_err := asset_server_load(&server, "mods://hello.txt", TextAsset)
+	testing.expect(t, hello_err.payload == nil)
+	testing.expect(t, hello_data != nil)
+	testing.expect_value(t, hello_data.content, "Hello Geri!")
 
 	// Test untyped
 	asset_server_register_extension(&server, ".txt", typeid_of(TextAsset))
-	untyped_res := asset_server_load_untyped(&server, "mods://hello.txt")
-	testing.expect(t, errors.is_ok(untyped_res))
-	untyped_ptr := errors.unwrap(untyped_res)
-	testing.expect(t, untyped_ptr != nil)
-	testing.expect_value(t, (^TextAsset)(untyped_ptr).content, "Hello Geri!")
+	untyped_res, _, untyped_err := asset_server_load_untyped(&server, "mods://hello.txt")
+	testing.expect(t, untyped_err.payload == nil)
+	testing.expect(t, untyped_res != nil)
+	testing.expect_value(t, (^TextAsset)(untyped_res).content, "Hello Geri!")
 }
 
 @(test)
@@ -89,12 +83,15 @@ test_gltf_loader :: proc(t: ^testing.T) {
 	defer asset_manager_destroy(&mgr)
 	asset_server_register(&server, &mgr)
 
-	res := asset_server_load(&server, "../geri-test/AnimatedTriangle.gltf", Gltf_Data)
-	testing.expect(t, errors.is_ok(res))
-	gltf_ptr := errors.unwrap(res)
-	testing.expect(t, gltf_ptr != nil)
-	testing.expect(t, gltf_ptr.raw_data != nil)
-	testing.expect(t, len(gltf_ptr.raw_data.meshes) > 0)
+	gltf_data, id, err := asset_server_load(
+		&server,
+		"../geri-test/AnimatedTriangle.gltf",
+		Gltf_Data,
+	)
+	testing.expect(t, err.payload == nil)
+	testing.expect(t, gltf_data != nil)
+	testing.expect(t, gltf_data.raw_data != nil)
+	testing.expect(t, len(gltf_data.raw_data.meshes) > 0)
 }
 
 @(test)
@@ -113,7 +110,11 @@ test_obj_loader :: proc(t: ^testing.T) {
 	sr: strings.Reader
 	strings.reader_init(&sr, obj_content)
 	reader := io.to_reader(strings.reader_to_stream(&sr))
-	res := obj_loader_proc(reader, nil, context.allocator)
+	load_ctx := Load_Context {
+		reader = reader,
+		path   = "test.obj",
+	}
+	res := obj_loader_proc(&load_ctx, nil, context.allocator)
 	testing.expect(t, errors.is_ok(res))
 	mesh_ptr := (^Obj_Mesh)(errors.unwrap(res))
 	defer obj_mesh_destroy(mesh_ptr)
@@ -131,7 +132,11 @@ test_obj_loader :: proc(t: ^testing.T) {
 		sr: strings.Reader
 		strings.reader_init(&sr, string(data))
 		reader := io.to_reader(strings.reader_to_stream(&sr))
-		real_res := obj_loader_proc(reader, nil, context.allocator)
+		load_ctx := Load_Context {
+			reader = reader,
+			path   = "../geri-test/Wolf_One_obj.obj",
+		}
+		real_res := obj_loader_proc(&load_ctx, nil, context.allocator)
 		testing.expect(t, errors.is_ok(real_res))
 		real_mesh := (^Obj_Mesh)(errors.unwrap(real_res))
 		if real_mesh != nil {
@@ -156,7 +161,11 @@ test_material_loader :: proc(t: ^testing.T) {
 	sr: strings.Reader
 	strings.reader_init(&sr, mtl_content)
 	reader := io.to_reader(strings.reader_to_stream(&sr))
-	res := material_loader_proc(reader, nil, context.allocator)
+	load_ctx := Load_Context {
+		reader = reader,
+		path   = "test.mtl",
+	}
+	res := material_loader_proc(&load_ctx, nil, context.allocator)
 	testing.expect(t, errors.is_ok(res))
 	lib_ptr := (^Materials)(errors.unwrap(res))
 	defer materials_destroy(lib_ptr, context.allocator)
@@ -196,7 +205,11 @@ test_material_loader_blender :: proc(t: ^testing.T) {
 	sr: strings.Reader
 	strings.reader_init(&sr, mtl_content)
 	reader := io.to_reader(strings.reader_to_stream(&sr))
-	res := material_loader_proc(reader, nil, context.allocator)
+	load_ctx := Load_Context {
+		reader = reader,
+		path   = "test.mtl",
+	}
+	res := material_loader_proc(&load_ctx, nil, context.allocator)
 	testing.expect(t, errors.is_ok(res))
 	lib_ptr := (^Materials)(errors.unwrap(res))
 	defer materials_destroy(lib_ptr, context.allocator)
@@ -215,4 +228,104 @@ test_material_loader_blender :: proc(t: ^testing.T) {
 	testing.expect_value(t, claws.name, "another_mat")
 	testing.expect_value(t, claws.shininess, f32(0.0))
 	testing.expect_value(t, claws.illum, 1)
+}
+
+import wgpu "vendor:wgpu"
+
+@(private)
+mock_texture_loader_proc :: proc(
+	ctx: ^Load_Context,
+	settings: rawptr,
+	allocator: runtime.Allocator,
+) -> errors.Result(rawptr, errors.Error) {
+	dummy := new(wgpu.Texture, allocator)
+	return errors.Ok(rawptr){value = dummy}
+}
+
+@(private)
+mock_texture_destroy_proc :: proc(asset: rawptr, allocator: runtime.Allocator) {
+	free(asset, allocator)
+}
+
+@(test)
+test_gltf_dependencies :: proc(t: ^testing.T) {
+	server: AssetServer
+	asset_server_init(&server)
+	defer asset_server_destroy(&server)
+
+	gltf_mgr: AssetManager(Gltf_Data)
+	asset_manager_init(&gltf_mgr, GLTF_LOADER)
+	defer asset_manager_destroy(&gltf_mgr)
+	asset_server_register(&server, &gltf_mgr)
+
+	tex_mgr: AssetManager(wgpu.Texture)
+	asset_manager_init(
+		&tex_mgr,
+		AssetLoader{load = mock_texture_loader_proc, destroy = mock_texture_destroy_proc},
+	)
+	defer asset_manager_destroy(&tex_mgr)
+	asset_server_register(&server, &tex_mgr)
+	asset_server_register_extension(&server, ".png", typeid_of(wgpu.Texture))
+	asset_server_register_extension(&server, ".jpg", typeid_of(wgpu.Texture))
+	asset_server_register_extension(&server, ".jpeg", typeid_of(wgpu.Texture))
+
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/eyes_diffuse.jpeg",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/Fur_Col_20.png",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/Fur_2.png",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/Fur_Alpha_3.png",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/fella3_Kopie_7.png",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/fur__fella3_jpg_001_diffuse.png",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/Material__wolf_col_tga_diffuse.jpeg",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/Material__wolf_col_tga_diffuse_jpeg.jpg",
+		transmute([]u8)string("dummy"),
+	)
+	asset_server_register_embedded(
+		&server,
+		"test_assets/gltf/wolf/eyes_diffuse_jpeg.jpg",
+		transmute([]u8)string("dummy"),
+	)
+
+	gltf_data, id, err := asset_server_load(
+		&server,
+		"test_assets/gltf/wolf/Wolf-Blender-2.82a.gltf",
+		Gltf_Data,
+	)
+	testing.expect(t, err.payload == nil)
+	testing.expect(t, gltf_data != nil)
+
+	testing.expect(t, len(gltf_data.textures) > 0)
+	for name, tex_id in gltf_data.textures {
+		_, ok := tex_mgr.assets[tex_id.id]
+		testing.expect(t, ok)
+	}
 }

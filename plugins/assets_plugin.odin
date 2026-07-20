@@ -93,6 +93,27 @@ clear_embedded_assets_system :: proc(
 
 import "../ecs/params"
 import errors "../errors"
+import "../graphics"
+import wgpu "vendor:wgpu"
+
+@(tag = "system")
+assets_cleanup_system :: proc(
+	world: ^ecs.World,
+	exit_events: params.EventReader(app.App_Exit_Event),
+) {
+	if len(exit_events.events) > 0 {
+		ecs.world_remove_resource(world, asset.AssetManager(graphics.Shader_Asset))
+		ecs.world_remove_resource(world, asset.AssetManager(wgpu.Texture))
+		ecs.world_remove_resource(world, asset.AssetManager(asset.Gltf_Data))
+
+		server := ecs.world_get_resource(world, asset.AssetServer)
+		if server != nil {
+			clear(&server.managers)
+		}
+
+		ecs.world_remove_resource(world, asset.AssetServer)
+	}
+}
 
 Assets_Plugin :: proc() -> app.Plugin {
 	return app.Plugin{build = proc(plugin: app.Plugin, a: ^app.App) -> (errors.Error, bool) {
@@ -111,6 +132,9 @@ Assets_Plugin :: proc() -> app.Plugin {
 
 			app.app_add_system(a, app.PreUpdate, asset_event_dispatcher_system)
 			app.app_add_system(a, app.PreUpdate, clear_embedded_assets_system)
+
+			cleanup_deps := []app.System_Dependency{rawptr(graphics.render_cleanup_system)}
+			app.app_add_system(a, app.Last, assets_cleanup_system, before = cleanup_deps)
 			return {}, true
 		}, destroy = nil}
 }

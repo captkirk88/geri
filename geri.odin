@@ -31,12 +31,12 @@ TextAsset :: struct {
 
 @(private)
 text_loader_proc :: proc(
-	reader: io.Reader,
+	ctx: ^asset.Load_Context,
 	settings: rawptr,
 	allocator: runtime.Allocator,
 ) -> errors.Result(rawptr, errors.Error) {
 	buf: [1024]u8
-	n, err := io.read(reader, buf[:])
+	n, err := io.read(ctx.reader, buf[:])
 	if err != nil && err != .EOF do return errors.Err(errors.Error){error = errors.from_payload(asset.AssetError.Loader_Error)}
 
 	asset_val := new(TextAsset, allocator)
@@ -60,11 +60,6 @@ test_assets_param :: proc(t: ^testing.T) {
 		load = text_loader_proc,
 	}
 	asset.asset_manager_init(&mgr, loader)
-	defer {
-		for _, val in mgr.assets {
-			delete(val.content, mgr.allocator)
-		}
-	}
 	asset.asset_server_register(&server, &mgr)
 
 	asset.asset_schemas_register(&server.registry, "mods", "test_base_sys")
@@ -80,8 +75,8 @@ test_assets_param :: proc(t: ^testing.T) {
 	defer os.remove(file_path)
 
 	// Load the asset
-	res := asset.asset_server_load(&server, "mods://hello.txt", TextAsset)
-	testing.expect(t, errors.is_ok(res))
+	res, _, load_err := asset.asset_server_load(&server, "mods://hello.txt", TextAsset)
+	testing.expect(t, load_err.payload == nil)
 
 	// Register AssetServer as a resource in the world
 	ecs.world_add_resource(&w, server)
@@ -132,11 +127,10 @@ test_gif_loading :: proc(t: ^testing.T) {
 
 	asset.asset_schemas_register(&server.registry, "game", "test_assets/")
 
-	res := asset.asset_server_load(&server, "game://blob.walk.gif", components.SpriteAnimation)
-	testing.expect(t, errors.is_ok(res))
-	if !errors.is_ok(res) {
+	anim, _, err := asset.asset_server_load(&server, "game://blob.walk.gif", components.SpriteAnimation)
+	testing.expect(t, err.payload == nil)
+	if err.payload != nil {
 		return
 	}
-	anim := errors.unwrap(res)
 	testing.expect(t, len(anim.frames) > 0)
 }

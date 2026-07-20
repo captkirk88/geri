@@ -48,11 +48,11 @@ asset_store :: proc(server: ^asset.AssetServer, id: asset.AssetId($T), val: T) {
 
 // cimage.Image Loader
 image_loader_proc :: proc(
-	reader: io.Reader,
+	ctx: ^asset.Load_Context,
 	settings: rawptr,
 	allocator: runtime.Allocator,
 ) -> errors.Result(rawptr, errors.Error) {
-	data, ok := read_all(reader, context.temp_allocator)
+	data, ok := read_all(ctx.reader, context.temp_allocator)
 	if !ok {
 		return errors.Err(errors.Error){error = errors.from_payload(asset.AssetError.Loader_Error)}
 	}
@@ -85,11 +85,11 @@ image_destroy_proc :: proc(asset_ptr: rawptr, allocator: runtime.Allocator) {
 
 // SpriteAnimation Loader (reads GIF)
 sprite_animation_loader_proc :: proc(
-	reader: io.Reader,
+	ctx: ^asset.Load_Context,
 	settings: rawptr,
 	allocator: runtime.Allocator,
 ) -> errors.Result(rawptr, errors.Error) {
-	data, ok := read_all(reader, context.temp_allocator)
+	data, ok := read_all(ctx.reader, context.temp_allocator)
 	if !ok {
 		return errors.Err(errors.Error){error = errors.from_payload(asset.AssetError.Loader_Error)}
 	}

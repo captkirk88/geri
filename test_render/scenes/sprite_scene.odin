@@ -32,27 +32,17 @@ sprite_setup :: proc(world: ^ecs.World) {
 	asset.asset_schemas_register(&server.registry, "game", "test_assets/")
 
 	// Load animations
-	walk_anim := errors.unwrap(
-		asset.asset_server_load(server, "game://blob.walk.gif", components.SpriteAnimation),
+	walk_anim, walk_id, walk_err := asset.asset_server_load(
+		server,
+		"game://blob.walk.gif",
+		components.SpriteAnimation,
 	)
 
-	attack_anim := errors.unwrap(
-		asset.asset_server_load(server, "game://blob.attack.gif", components.SpriteAnimation),
-	)
-
-	// Resolve the asset IDs of the loaded animations
-	_, walk_id_untyped, _ := asset.asset_schemas_resolve(&server.registry, "game://blob.walk.gif")
-	walk_id := asset.AssetId(components.SpriteAnimation) {
-		id = walk_id_untyped,
-	}
-
-	_, attack_id_untyped, _ := asset.asset_schemas_resolve(
-		&server.registry,
+	attack_anim, attack_id, attack_err := asset.asset_server_load(
+		server,
 		"game://blob.attack.gif",
+		components.SpriteAnimation,
 	)
-	attack_id := asset.AssetId(components.SpriteAnimation) {
-		id = attack_id_untyped,
-	}
 
 	// 1. Spawn Global Camera
 	global_cam_ent := ecs.world_spawn(world)

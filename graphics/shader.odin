@@ -139,7 +139,7 @@ create_shader_pass_from_module :: proc(
 	// Vertex Layout configuration
 	vertex_buffer_layout: wgpu.VertexBufferLayout
 	vertex_attributes_2d: [2]wgpu.VertexAttribute
-	vertex_attributes_3d: [2]wgpu.VertexAttribute
+	vertex_attributes_3d: [3]wgpu.VertexAttribute
 
 	if !is_3d {
 		vertex_attributes_2d = {
@@ -156,11 +156,12 @@ create_shader_pass_from_module :: proc(
 		vertex_attributes_3d = {
 			{format = .Float32x3, offset = 0, shaderLocation = 0},
 			{format = .Float32x4, offset = 12, shaderLocation = 1},
+			{format = .Float32x2, offset = 28, shaderLocation = 2},
 		}
 		vertex_buffer_layout = {
 			arrayStride    = size_of(Vertex3D),
 			stepMode       = .Vertex,
-			attributeCount = 2,
+			attributeCount = 3,
 			attributes     = &vertex_attributes_3d[0],
 		}
 	}
@@ -183,6 +184,12 @@ create_shader_pass_from_module :: proc(
 		targets     = &color_target,
 	}
 
+	depth_stencil_state := wgpu.DepthStencilState {
+		format = .Depth24Plus,
+		depthWriteEnabled = .False,
+		depthCompare = .Always,
+	}
+
 	pipeline_desc := wgpu.RenderPipelineDescriptor {
 		layout = pipeline_layout,
 		vertex = {
@@ -193,6 +200,7 @@ create_shader_pass_from_module :: proc(
 		},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = is_3d ? .Back : .None},
 		multisample = {count = multisample_count, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
+		depthStencil = &depth_stencil_state,
 		fragment = &fragment_state,
 	}
 

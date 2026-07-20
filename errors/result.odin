@@ -68,7 +68,7 @@ unwrap_orelse :: proc(rs: Result($T, $E), func: proc(rs: Result(T, E)) -> T) -> 
 
 
 unwrap_err :: proc(rs: Result($T, $E)) -> E {
-	err: string
+	err: E
 	switch v in rs {
 	case Err(E):
 		err := rs.(Err(E))

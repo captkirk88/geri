@@ -3,11 +3,15 @@
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) normal: vec3<f32>,
 }
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) world_pos: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) normal: vec3<f32>,
 }
 
 struct Light {
@@ -26,8 +30,12 @@ struct PbrUniforms {
     roughness: f32,
     metallic: f32,
     ao: f32,
+    num_joints: i32,
+    joint_matrices: array<mat4x4<f32>, 64>,
 }
 @group(0) @binding(0) var<uniform> uniforms: PbrUniforms;
+@group(0) @binding(1) var t_diffuse: texture_2d<f32>;
+@group(0) @binding(2) var s_diffuse: sampler;
 
 @vertex
 fn vs_main(model_in: VertexInput) -> VertexOutput {
@@ -36,18 +44,35 @@ fn vs_main(model_in: VertexInput) -> VertexOutput {
     out.world_pos = world_pos4.xyz;
     out.clip_position = uniforms.vp * world_pos4;
     out.color = model_in.color;
+    out.uv = model_in.uv;
+    
+    let normal4 = uniforms.model * vec4<f32>(model_in.normal, 0.0);
+    out.normal = normalize(normal4.xyz);
+    
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var N: vec3<f32> = normalize(cross(dpdx(in.world_pos), dpdy(in.world_pos)));
+    var N: vec3<f32> = normalize(in.normal);
     let V = normalize(uniforms.cam_pos - in.world_pos);
     if (dot(N, V) < 0.0) {
         N = -N;
     }
     
-    let albedo = in.color.rgb;
+    // Sample the diffuse texture if UVs are non-zero, otherwise use vertex color
+    var albedo = in.color.rgb;
+    var alpha = in.color.a;
+    if (in.uv.x != 0.0 || in.uv.y != 0.0) {
+        let tex_color = textureSample(t_diffuse, s_diffuse, in.uv);
+        albedo = tex_color.rgb * in.color.rgb;
+        alpha = tex_color.a * in.color.a;
+    }
+
+    if (alpha < 0.1) {
+        discard;
+    }
+
     let metallic = uniforms.metallic;
     let roughness = max(uniforms.roughness, 0.05); // prevent divide by zero
     let ao = uniforms.ao;
@@ -94,5 +119,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let mapped = color / (color + vec3<f32>(1.0));
     let corrected = pow(mapped, vec3<f32>(1.0 / 2.2));
     
-    return vec4<f32>(corrected, in.color.a);
+    return vec4<f32>(corrected, alpha);
 }

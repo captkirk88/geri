@@ -10,6 +10,7 @@ import log "../logging"
 import "../windowing"
 import "./components"
 import "base:runtime"
+import "core:c"
 import "core:fmt"
 import "core:image"
 import "core:io"
@@ -17,6 +18,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
+import stbi "vendor:stb/image"
 import "vendor:wgpu"
 import "vendor:wgpu/sdl3glue"
 
@@ -30,6 +32,14 @@ recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
 	if ctx.msaa_texture != nil {
 		wgpu.TextureRelease(ctx.msaa_texture)
 		ctx.msaa_texture = nil
+	}
+	if ctx.depth_view != nil {
+		wgpu.TextureViewRelease(ctx.depth_view)
+		ctx.depth_view = nil
+	}
+	if ctx.depth_texture != nil {
+		wgpu.TextureRelease(ctx.depth_texture)
+		ctx.depth_texture = nil
 	}
 
 	if sample_count > 1 {
@@ -45,6 +55,19 @@ recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
 		if ctx.msaa_texture != nil {
 			ctx.msaa_view = wgpu.TextureCreateView(ctx.msaa_texture, nil)
 		}
+	}
+
+	depth_desc := wgpu.TextureDescriptor {
+		usage         = {.RenderAttachment},
+		dimension     = ._2D,
+		size          = {ctx.config.width, ctx.config.height, 1},
+		format        = .Depth24Plus,
+		mipLevelCount = 1,
+		sampleCount   = sample_count > 1 ? sample_count : 1,
+	}
+	ctx.depth_texture = wgpu.DeviceCreateTexture(ctx.device, &depth_desc)
+	if ctx.depth_texture != nil {
+		ctx.depth_view = wgpu.TextureCreateView(ctx.depth_texture, nil)
 	}
 }
 
@@ -153,14 +176,14 @@ preprocess_wgsl_includes :: proc(
 }
 
 shader_loader_proc :: proc(
-	reader: io.Reader,
+	ctx: ^asset.Load_Context,
 	settings: rawptr,
 	allocator: runtime.Allocator,
 ) -> errors.Result(rawptr, errors.Error) {
 	data_bytes := make([dynamic]byte, context.temp_allocator)
 	buf: [4096]byte
 	for {
-		n, err := io.read(reader, buf[:])
+		n, err := io.read(ctx.reader, buf[:])
 		if n > 0 {
 			append(&data_bytes, ..buf[:n])
 		}
@@ -219,6 +242,71 @@ shader_loader_proc :: proc(
 	shader_asset := new(Shader_Asset, allocator)
 	shader_asset.module = module
 	return errors.Ok(rawptr){value = shader_asset}
+}
+
+texture_loader_proc :: proc(
+	ctx: ^asset.Load_Context,
+	settings: rawptr,
+	allocator: runtime.Allocator,
+) -> errors.Result(rawptr, errors.Error) {
+	data, ok := read_all(ctx.reader, context.temp_allocator)
+	if !ok {
+		return errors.Err(errors.Error){error = errors.from_payload(asset.AssetError.Loader_Error)}
+	}
+
+	w, h, comp: c.int
+	stb_pixels := stbi.load_from_memory(raw_data(data), c.int(len(data)), &w, &h, &comp, 4)
+	if stb_pixels == nil {
+		return errors.Err(errors.Error){error = errors.from_payload(asset.AssetError.Invalid_Data)}
+	}
+	defer stbi.image_free(stb_pixels)
+
+	ctx := global_render_context
+	if ctx == nil || ctx.device == nil || ctx.queue == nil {
+		return errors.Err(errors.Error) {
+			error = errors.new("Render_Context not available for Texture_Loader"),
+		}
+	}
+
+	desc := wgpu.TextureDescriptor {
+		usage = {.TextureBinding, .CopyDst},
+		dimension = ._2D,
+		size = {width = u32(w), height = u32(h), depthOrArrayLayers = 1},
+		format = .RGBA8UnormSrgb,
+		mipLevelCount = 1,
+		sampleCount = 1,
+	}
+	tex := wgpu.DeviceCreateTexture(ctx.device, &desc)
+	if tex == nil {
+		return errors.Err(errors.Error){error = errors.new("Failed to create WGPU texture")}
+	}
+
+	tex_layout := wgpu.TexelCopyBufferLayout {
+		offset       = 0,
+		bytesPerRow  = u32(w * 4),
+		rowsPerImage = u32(h),
+	}
+	dst := wgpu.TexelCopyTextureInfo {
+		texture  = tex,
+		mipLevel = 0,
+		origin   = {0, 0, 0},
+		aspect   = .All,
+	}
+	wgpu.QueueWriteTexture(ctx.queue, &dst, stb_pixels, uint(w * h * 4), &tex_layout, &desc.size)
+
+	ptex := new(wgpu.Texture, allocator)
+	ptex^ = tex
+	return errors.Ok(rawptr){value = ptex}
+}
+
+texture_destroy_proc :: proc(asset_ptr: rawptr, allocator: runtime.Allocator) {
+	ptex := (^wgpu.Texture)(asset_ptr)
+	if ptex != nil {
+		if ptex^ != nil {
+			wgpu.TextureRelease(ptex^)
+		}
+		free(ptex, allocator)
+	}
 }
 
 shader_destroy_proc :: proc(asset_ptr: rawptr, allocator: runtime.Allocator) {
@@ -354,13 +442,27 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 
 	wgpu.SurfaceConfigure(surface, &config)
 
+	sampler_desc := wgpu.SamplerDescriptor {
+		addressModeU  = .Repeat,
+		addressModeV  = .Repeat,
+		addressModeW  = .Repeat,
+		magFilter     = .Linear,
+		minFilter     = .Linear,
+		mipmapFilter  = .Linear,
+		lodMinClamp   = 0.0,
+		lodMaxClamp   = 32.0,
+		maxAnisotropy = 1,
+	}
+	default_sampler := wgpu.DeviceCreateSampler(req_data.device, &sampler_desc)
+
 	render_ctx := Render_Context {
-		instance = instance,
-		surface  = surface,
-		adapter  = req_data.adapter,
-		device   = req_data.device,
-		queue    = queue,
-		config   = config,
+		instance        = instance,
+		surface         = surface,
+		adapter         = req_data.adapter,
+		device          = req_data.device,
+		queue           = queue,
+		config          = config,
+		default_sampler = default_sampler,
 	}
 
 	pbr_config := Pbr_Config {
@@ -392,19 +494,9 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 	render_ctx_ptr := ecs.world_get_resource(&a.world, Render_Context)
 	global_render_context = render_ctx_ptr
 
-	batch2d := init_batch2d(
-		req_data.device,
-		config.format,
-		nil,
-		u32(pbr_config.antialiasing),
-	)
+	batch2d := init_batch2d(req_data.device, config.format, nil, u32(pbr_config.antialiasing))
 	app.app_add_resource(a, batch2d)
-	batch3d := init_batch3d(
-		req_data.device,
-		config.format,
-		nil,
-		u32(pbr_config.antialiasing),
-	)
+	batch3d := init_batch3d(req_data.device, config.format, nil, u32(pbr_config.antialiasing))
 	app.app_add_resource(a, batch3d)
 
 	// Set up Asset Loaders if AssetServer exists
@@ -523,10 +615,53 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 		asset.asset_server_register(server, shader_mgr_ptr)
 		asset.asset_server_register_extension(server, ".wgsl", typeid_of(Shader_Asset))
 
+		// Register Texture manager
+		tex_mgr: asset.AssetManager(wgpu.Texture)
+		asset.asset_manager_init(
+			&tex_mgr,
+			asset.AssetLoader{load = texture_loader_proc, destroy = texture_destroy_proc},
+			a.world.allocator,
+		)
+		ecs.world_add_resource(
+			&a.world,
+			tex_mgr,
+			proc(m: ^asset.AssetManager(wgpu.Texture), alloc: runtime.Allocator) {
+				asset.asset_manager_destroy(m)
+			},
+		)
+		tex_mgr_ptr := ecs.world_get_resource(&a.world, asset.AssetManager(wgpu.Texture))
+		asset.asset_server_register(server, tex_mgr_ptr)
+		asset.asset_server_register_extension(server, ".png", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".jpg", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".jpeg", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".tga", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".bmp", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".psd", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".gif", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".hdr", typeid_of(wgpu.Texture))
+		asset.asset_server_register_extension(server, ".pic", typeid_of(wgpu.Texture))
+
 		// Register embedded shaders
-		asset.asset_server_register_embedded(server, "game://shaders/pbr_math.wgsl", #load("embed_assets/pbr_math.wgsl"))
-		asset.asset_server_register_embedded(server, "game://shaders/pbr.wgsl", #load("embed_assets/pbr.wgsl"))
-		asset.asset_server_register_embedded(server, "game://shaders/default_3d.wgsl", #load("embed_assets/default_3d.wgsl"))
+		asset.asset_server_register_embedded(
+			server,
+			"game://shaders/pbr_math.wgsl",
+			#load("embed_assets/pbr_math.wgsl"),
+		)
+		asset.asset_server_register_embedded(
+			server,
+			"game://shaders/pbr.wgsl",
+			#load("embed_assets/pbr.wgsl"),
+		)
+		asset.asset_server_register_embedded(
+			server,
+			"game://shaders/pbr_skinned.wgsl",
+			#load("embed_assets/pbr_skinned.wgsl"),
+		)
+		asset.asset_server_register_embedded(
+			server,
+			"game://shaders/default_3d.wgsl",
+			#load("embed_assets/default_3d.wgsl"),
+		)
 	}
 
 	app.app_add_system(a, app.PreUpdate, camera.auto_transform_system)
@@ -548,6 +683,7 @@ render_cleanup_system :: proc(
 	fctx: params.Res(Frame_Context),
 ) {
 	if len(exit_events.events) > 0 {
+
 		custom_fonts_destroy()
 		if batch2d.ptr != nil do destroy_batch2d(batch2d.ptr)
 		if batch3d.ptr != nil do destroy_batch3d(batch3d.ptr)
@@ -565,6 +701,11 @@ render_cleanup_system :: proc(
 		}
 
 		if render_ctx.ptr != nil {
+			if render_ctx.ptr.default_sampler != nil {
+				wgpu.SamplerRelease(render_ctx.ptr.default_sampler)
+				render_ctx.ptr.default_sampler = nil
+			}
+
 			if render_ctx.ptr.msaa_view != nil {
 				wgpu.TextureViewRelease(render_ctx.ptr.msaa_view)
 				render_ctx.ptr.msaa_view = nil

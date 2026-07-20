@@ -6,6 +6,8 @@ import "core:bytes"
 import "core:fmt"
 import "core:hash"
 import "core:io"
+import "core:log"
+import virtual "core:mem/virtual"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -47,13 +49,29 @@ AssetError :: enum {
 	File_Open_Error,
 }
 
+Asset_Dependency :: struct {
+	path: string,
+	type: typeid,
+}
+
+Load_Context :: struct {
+	reader: io.Reader,
+	path:   string,
+}
+
 AssetLoader :: struct {
-	load:    proc(
-		reader: io.Reader,
+	load:         proc(
+		ctx: ^Load_Context,
 		settings: rawptr,
 		allocator: runtime.Allocator,
 	) -> errors.Result(rawptr, errors.Error),
-	destroy: proc(asset: rawptr, allocator: runtime.Allocator),
+	destroy:      proc(asset: rawptr, allocator: runtime.Allocator),
+	dependencies: proc(
+		asset: rawptr,
+		ctx: ^Load_Context,
+		settings: rawptr,
+		allocator: runtime.Allocator,
+	) -> []Asset_Dependency,
 }
 
 IAssetManager :: struct {
@@ -61,7 +79,7 @@ IAssetManager :: struct {
 	load_asset:            proc(
 		manager_ptr: rawptr,
 		id: UntypedAssetId,
-		reader: io.Reader,
+		ctx: ^Load_Context,
 		settings: rawptr,
 	) -> errors.Result(rawptr, errors.Error),
 	destroy:               proc(manager_ptr: rawptr),
@@ -70,6 +88,13 @@ IAssetManager :: struct {
 		target_slice_ptr: rawptr,
 		allocator: runtime.Allocator,
 	),
+	get_dependencies:      proc(
+		manager_ptr: rawptr,
+		id: UntypedAssetId,
+		ctx: ^Load_Context,
+		settings: rawptr,
+		allocator: runtime.Allocator,
+	) -> []Asset_Dependency,
 }
 
 AssetManager :: struct($T: typeid) {
@@ -77,6 +102,7 @@ AssetManager :: struct($T: typeid) {
 	loader:    AssetLoader,
 	assets:    map[UntypedAssetId]T,
 	allocator: runtime.Allocator,
+	arena:     virtual.Arena,
 }
 
 asset_manager_init :: proc(
@@ -87,31 +113,34 @@ asset_manager_init :: proc(
 	mgr.loader = loader
 	mgr.allocator = allocator
 	mgr.assets = make(map[UntypedAssetId]T, allocator)
+	_ = virtual.arena_init_growing(&mgr.arena)
 }
 
 asset_manager_destroy :: proc(mgr: ^AssetManager($T)) {
 	if mgr.assets == nil do return
 	if mgr.loader.destroy != nil {
+		allocator := virtual.arena_allocator(&mgr.arena)
 		for id in mgr.assets {
 			val_ptr := &mgr.assets[id]
 			ti := type_info_of(T)
 			_, is_ptr := ti.variant.(runtime.Type_Info_Pointer)
 			if is_ptr {
 				ptr := (^rawptr)(val_ptr)^
-				mgr.loader.destroy(ptr, mgr.allocator)
+				mgr.loader.destroy(ptr, allocator)
 			} else {
-				mgr.loader.destroy(val_ptr, mgr.allocator)
+				mgr.loader.destroy(val_ptr, allocator)
 			}
 		}
 	}
 	delete(mgr.assets)
 	mgr.assets = nil
+	virtual.arena_destroy(&mgr.arena)
 }
 
 asset_manager_load :: proc(
 	mgr: ^AssetManager($T),
 	id: UntypedAssetId,
-	reader: io.Reader,
+	ctx: ^Load_Context,
 	settings: rawptr,
 ) -> errors.Result(rawptr, errors.Error) {
 	sync.mutex_lock(&mgr.mutex)
@@ -121,7 +150,8 @@ asset_manager_load :: proc(
 		return errors.Ok(rawptr){value = val}
 	}
 
-	res := mgr.loader.load(reader, settings, mgr.allocator)
+	arena_allocator := virtual.arena_allocator(&mgr.arena)
+	res := mgr.loader.load(ctx, settings, arena_allocator)
 	switch r in res {
 	case errors.Err(errors.Error):
 		return r
@@ -133,7 +163,7 @@ asset_manager_load :: proc(
 		ti := type_info_of(T)
 		_, is_ptr := ti.variant.(runtime.Type_Info_Pointer)
 		if !is_ptr {
-			free(raw_asset, mgr.allocator)
+			free(raw_asset, arena_allocator)
 		}
 
 		return errors.Ok(rawptr){value = &mgr.assets[id]}
@@ -142,21 +172,23 @@ asset_manager_load :: proc(
 }
 
 AssetSchemaRegistry :: struct {
-	mutex: sync.Mutex,
-	paths: map[string]string, // scheme name -> base path
+	mutex:     sync.Mutex,
+	paths:     map[string]string, // scheme name -> base path
+	allocator: runtime.Allocator,
 }
 
 asset_schema_registry_init :: proc(
 	registry: ^AssetSchemaRegistry,
 	allocator := context.allocator,
 ) {
+	registry.allocator = allocator
 	registry.paths = make(map[string]string, allocator)
 }
 
 asset_schema_registry_destroy :: proc(registry: ^AssetSchemaRegistry) {
 	for k, v in registry.paths {
-		delete(k)
-		delete(v)
+		delete(k, registry.allocator)
+		delete(v, registry.allocator)
 	}
 	delete(registry.paths)
 }
@@ -166,11 +198,11 @@ asset_schemas_register :: proc(registry: ^AssetSchemaRegistry, scheme: string, b
 	defer sync.mutex_unlock(&registry.mutex)
 
 	if old_base, ok := registry.paths[scheme]; ok {
-		delete(old_base)
-		registry.paths[scheme] = strings.clone(base_path)
+		delete(old_base, registry.allocator)
+		registry.paths[scheme] = strings.clone(base_path, registry.allocator)
 	} else {
-		s := strings.clone(scheme)
-		b := strings.clone(base_path)
+		s := strings.clone(scheme, registry.allocator)
+		b := strings.clone(base_path, registry.allocator)
 		registry.paths[s] = b
 	}
 }
@@ -224,6 +256,7 @@ AssetServer :: struct {
 	allocator:       runtime.Allocator,
 	embedded_assets: map[string][]byte,
 	loaded_queue:    [dynamic]Asset_Loaded,
+	asset_paths:     map[UntypedAssetId]string,
 }
 
 asset_server_init :: proc(server: ^AssetServer, allocator := context.allocator) {
@@ -233,6 +266,7 @@ asset_server_init :: proc(server: ^AssetServer, allocator := context.allocator) 
 	server.extension_types = make(map[string]typeid, allocator)
 	server.embedded_assets = make(map[string][]byte, allocator)
 	server.loaded_queue = make([dynamic]Asset_Loaded, allocator)
+	server.asset_paths = make(map[UntypedAssetId]string, allocator)
 }
 
 asset_server_destroy :: proc(server: ^AssetServer) {
@@ -244,6 +278,10 @@ asset_server_destroy :: proc(server: ^AssetServer) {
 	delete(server.extension_types)
 	delete(server.embedded_assets)
 	delete(server.loaded_queue)
+	for _, path in server.asset_paths {
+		delete(path)
+	}
+	delete(server.asset_paths)
 }
 
 asset_server_register_embedded :: proc(server: ^AssetServer, path: string, data: []byte) {
@@ -293,17 +331,40 @@ asset_server_register :: proc(server: ^AssetServer, manager: ^AssetManager($T)) 
 		load_asset = proc(
 			manager_ptr: rawptr,
 			id: UntypedAssetId,
-			reader: io.Reader,
+			ctx: ^Load_Context,
 			settings: rawptr,
 		) -> errors.Result(rawptr, errors.Error) {
 			mgr := (^AssetManager(T))(manager_ptr)
-			return asset_manager_load(mgr, id, reader, settings)
+			return asset_manager_load(mgr, id, ctx, settings)
 		},
 		destroy = proc(manager_ptr: rawptr) {
 			mgr := (^AssetManager(T))(manager_ptr)
 			asset_manager_destroy(mgr)
 		},
 		populate_assets_slice = asset_manager_populate_slice(T),
+		get_dependencies = proc(
+			manager_ptr: rawptr,
+			id: UntypedAssetId,
+			ctx: ^Load_Context,
+			settings: rawptr,
+			allocator: runtime.Allocator,
+		) -> []Asset_Dependency {
+			mgr := (^AssetManager(T))(manager_ptr)
+			if mgr.loader.dependencies == nil do return nil
+			sync.mutex_lock(&mgr.mutex)
+			defer sync.mutex_unlock(&mgr.mutex)
+			if val, ok := &mgr.assets[id]; ok {
+				ti := type_info_of(T)
+				_, is_ptr := ti.variant.(runtime.Type_Info_Pointer)
+				if is_ptr {
+					ptr := (^rawptr)(val)^
+					return mgr.loader.dependencies(ptr, ctx, settings, allocator)
+				} else {
+					return mgr.loader.dependencies(rawptr(val), ctx, settings, allocator)
+				}
+			}
+			return nil
+		},
 	}
 }
 
@@ -316,7 +377,7 @@ asset_server_register_extension :: proc(server: ^AssetServer, ext: string, tid: 
 asset_server_load_by_id :: proc(
 	server: ^AssetServer,
 	id: AssetId($T),
-	reader: io.Reader,
+	ctx: ^Load_Context,
 	settings: rawptr = nil,
 ) -> errors.Result(^T, errors.Error) {
 	sync.mutex_lock(&server.mutex)
@@ -325,7 +386,7 @@ asset_server_load_by_id :: proc(
 
 	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Manager_Not_Found)}
 
-	res := mgr_val.load_asset(mgr_val.manager_ptr, id.id, reader, settings)
+	res := mgr_val.load_asset(mgr_val.manager_ptr, id.id, ctx, settings)
 	#partial switch r in res {
 	case errors.Err(errors.Error):
 		return r
@@ -339,7 +400,7 @@ asset_server_load_untyped_by_id :: proc(
 	server: ^AssetServer,
 	id: UntypedAssetId,
 	tid: typeid,
-	reader: io.Reader,
+	ctx: ^Load_Context,
 	settings: rawptr = nil,
 ) -> errors.Result(rawptr, errors.Error) {
 	sync.mutex_lock(&server.mutex)
@@ -348,7 +409,7 @@ asset_server_load_untyped_by_id :: proc(
 
 	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Manager_Not_Found)}
 
-	return mgr_val.load_asset(mgr_val.manager_ptr, id, reader, settings)
+	return mgr_val.load_asset(mgr_val.manager_ptr, id, ctx, settings)
 }
 
 asset_server_load :: proc(
@@ -357,22 +418,26 @@ asset_server_load :: proc(
 	$T: typeid,
 	settings: rawptr = nil,
 	caller_location := #caller_location,
-) -> errors.Result(^T, errors.Error) {
+) -> (
+	^T,
+	AssetId(T),
+	errors.Error,
+) {
 	resolved, id, ok := asset_schemas_resolve(&server.registry, path)
-	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Path_Not_Resolved)}
+	if !ok do return nil, AssetId(T){id = id}, errors.from_payload(AssetError.Path_Not_Resolved)
 
 	// Try quick lookup
 	sync.mutex_lock(&server.mutex)
 	mgr_val, mgr_ok := server.managers[typeid_of(T)]
 	sync.mutex_unlock(&server.mutex)
 
-	if !mgr_ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Manager_Not_Found)}
+	if !mgr_ok do return nil, AssetId(T){id = id}, errors.from_payload(AssetError.Manager_Not_Found)
 
 	mgr := (^AssetManager(T))(mgr_val.manager_ptr)
 	sync.mutex_lock(&mgr.mutex)
 	if val, found := &mgr.assets[id]; found {
 		sync.mutex_unlock(&mgr.mutex)
-		return errors.Ok(^T){value = val}
+		return val, AssetId(T){id = id}, errors.none()
 	}
 	sync.mutex_unlock(&mgr.mutex)
 
@@ -395,24 +460,55 @@ asset_server_load :: proc(
 			bytes.reader_init(&r, embed_data)
 			reader = bytes.reader_to_stream(&r)
 		} else {
-			return errors.Err(errors.Error) {
-				error = errors.from_payload(
-					AssetError.File_Open_Error,
-					location = caller_location,
-				),
-			}
+			return nil, AssetId(T) {
+				id = id,
+			}, errors.from_payload(AssetError.File_Open_Error, location = caller_location)
 		}
 	}
 	defer if opened do os.close(f)
 
-	res := asset_server_load_by_id(server, AssetId(T){id = id}, reader, settings)
+	load_ctx := Load_Context {
+		reader = reader,
+		path   = resolved,
+	}
+	res := asset_server_load_by_id(server, AssetId(T){id = id}, &load_ctx, settings)
+	loaded: ^T = nil
+
 	#partial switch r in res {
 	case errors.Ok(^T):
 		sync.mutex_lock(&server.mutex)
+		if id in server.asset_paths {
+			delete(server.asset_paths[id])
+		}
+		server.asset_paths[id] = strings.clone(resolved, server.allocator)
 		append(&server.loaded_queue, Asset_Loaded{path = string(path), id = id})
+		mgr_val, mgr_ok := server.managers[typeid_of(T)]
 		sync.mutex_unlock(&server.mutex)
+
+		if mgr_ok && mgr_val.get_dependencies != nil {
+			deps := mgr_val.get_dependencies(
+				mgr_val.manager_ptr,
+				id,
+				&load_ctx,
+				settings,
+				context.temp_allocator,
+			)
+			for dep in deps {
+				_, _, dep_err := asset_server_load_untyped(server, AssetPath(dep.path), settings)
+				if dep_err.payload != nil {
+					// We should probably log this error, but for now we'll just ignore it.
+					log.errorf("Failed to load dependency %s: %v\n", dep.path, dep_err)
+					return nil, {}, dep_err
+				}
+			}
+		}
+
+		loaded = errors.unwrap(res)
 	}
-	return res
+	if loaded == nil {
+		return nil, {}, errors.unwrap_err(res)
+	}
+	return loaded, AssetId(T){id = id}, errors.none()
 }
 
 asset_server_load_untyped :: proc(
@@ -420,22 +516,26 @@ asset_server_load_untyped :: proc(
 	path: AssetPath,
 	settings: rawptr = nil,
 	caller_location := #caller_location,
-) -> errors.Result(rawptr, errors.Error) {
+) -> (
+	rawptr,
+	UntypedAssetId,
+	errors.Error,
+) {
 	resolved, id, ok := asset_schemas_resolve(&server.registry, path)
-	if !ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Path_Not_Resolved)}
+	if !ok do return nil, id, errors.from_payload(AssetError.Path_Not_Resolved)
 
 	ext := filepath.ext(resolved)
 	sync.mutex_lock(&server.mutex)
 	tid, found_tid := server.extension_types[ext]
 	sync.mutex_unlock(&server.mutex)
 
-	if !found_tid do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Type_Mismatch)}
+	if !found_tid do return nil, id, errors.from_payload(AssetError.Type_Mismatch)
 
 	sync.mutex_lock(&server.mutex)
 	mgr_val, mgr_ok := server.managers[tid]
 	sync.mutex_unlock(&server.mutex)
 
-	if !mgr_ok do return errors.Err(errors.Error){error = errors.from_payload(AssetError.Manager_Not_Found)}
+	if !mgr_ok do return nil, id, errors.from_payload(AssetError.Manager_Not_Found)
 
 	mgr_ptr := mgr_val.manager_ptr
 
@@ -458,22 +558,54 @@ asset_server_load_untyped :: proc(
 			bytes.reader_init(&r, embed_data)
 			reader = bytes.reader_to_stream(&r)
 		} else {
-			return errors.Err(errors.Error) {
-				error = errors.from_payload(
-					AssetError.File_Open_Error,
-					location = caller_location,
-				),
-			}
+			return nil, id, errors.from_payload(
+				AssetError.File_Open_Error,
+				location = caller_location,
+			)
 		}
 	}
 	defer if opened do os.close(f)
 
-	res := mgr_val.load_asset(mgr_ptr, id, reader, settings)
+	load_ctx := Load_Context {
+		reader = reader,
+		path   = resolved,
+	}
+	res := mgr_val.load_asset(mgr_ptr, id, &load_ctx, settings)
+	maybe_loaded: rawptr = nil
 	#partial switch r in res {
 	case errors.Ok(rawptr):
 		sync.mutex_lock(&server.mutex)
+		if id in server.asset_paths {
+			delete(server.asset_paths[id])
+		}
+		server.asset_paths[id] = strings.clone(resolved, server.allocator)
 		append(&server.loaded_queue, Asset_Loaded{path = string(path), id = id})
 		sync.mutex_unlock(&server.mutex)
+
+		if mgr_val.get_dependencies != nil {
+			deps := mgr_val.get_dependencies(
+				mgr_ptr,
+				id,
+				&load_ctx,
+				settings,
+				context.temp_allocator,
+			)
+			for dep in deps {
+				_, _, dep_err := asset_server_load_untyped(server, AssetPath(dep.path), nil)
+				if dep_err.payload != nil {
+					// We should probably log this error, but for now we'll just ignore it.
+					log.errorf("Failed to load dependency %s: %v\n", dep.path, dep_err)
+					return nil, {}, dep_err
+				}
+			}
+		}
+
+		maybe_loaded = errors.unwrap(res)
 	}
-	return res
+
+	if maybe_loaded == nil {
+		return nil, {}, errors.unwrap_err(res)
+	}
+
+	return maybe_loaded, id, errors.none()
 }

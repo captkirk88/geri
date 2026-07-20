@@ -65,6 +65,7 @@ scenes_list := []Scene {
 		name = "Models",
 		init = scenes.model_setup,
 		exit = proc(world: ^ecs.World) -> (errors.Error, bool) {
+			ecs.world_remove_resource(world, scenes.Wolf_Render_State)
 			ecs.world_clear(world)
 			return {}, true
 		},
@@ -98,8 +99,8 @@ scene_transition_system :: proc(
 
 	for event in sdl_events.events {
 		if event.type == .KEY_DOWN && event.key.key == sdl3.K_ESCAPE {
-			should_transition = true
-			elapsed.value^ = 0.0
+			ecs.emit(world, app.App_Exit_Event{})
+			return
 		}
 	}
 
@@ -360,10 +361,10 @@ main :: proc() {
 	for !application.should_exit {
 		elapsed := time.tick_since(start_time)
 
-		// if !screenshot_taken && elapsed >= screenshot_time {
-		// 	graphics.capture_screenshot(&application.world, "test_render_screenshot.png", .PNG)
-		// 	screenshot_taken = true
-		// }
+		if !screenshot_taken && elapsed >= screenshot_time {
+			graphics.capture_screenshot(&application.world, "test_render_screenshot.png", .PNG)
+			screenshot_taken = true
+		}
 
 		if elapsed >= duration {
 			ecs.emit(&application.world, app.App_Exit_Event{})

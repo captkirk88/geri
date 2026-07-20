@@ -29,12 +29,6 @@ GltfModel :: struct {
 	color: [4]f32,
 }
 
-ObjModel :: struct {
-	mesh:      asset.AssetId(asset.Obj_Mesh),
-	materials: asset.AssetId(asset.Materials),
-	color:     [4]f32,
-}
-
 model_setup :: proc(world: ^ecs.World) {
 	server := ecs.world_get_resource(world, asset.AssetServer)
 	if server == nil do panic("AssetServer resource not found")
@@ -51,82 +45,30 @@ model_setup :: proc(world: ^ecs.World) {
 	asset.asset_schemas_register(&server.registry, "game", "test_assets/")
 
 	// Load assets
-	gltf_res := asset.asset_server_load(server, "game://AnimatedTriangle.gltf", asset.Gltf_Data)
-	_ = errors.unwrap(gltf_res)
+	triangle_gltf, triangle_id, triangle_err := asset.asset_server_load(
+		server,
+		"game://gltf/AnimatedTriangle.gltf",
+		asset.Gltf_Data,
+	)
 
-	obj_res := asset.asset_server_load(server, "game://Wolf_One.obj", asset.Obj_Mesh)
-	_ = errors.unwrap(obj_res)
-
-	mtl_res := asset.asset_server_load(server, "game://Wolf_One.mtl", asset.Materials)
-	mtl_data := errors.unwrap(mtl_res)
+	wolf, wolf_id, wolf_err := asset.asset_server_load(
+		server,
+		"game://gltf/wolf/Wolf-Blender-2.82a.gltf",
+		asset.Gltf_Data,
+	)
 
 	// Load WGSL shader assets
-	pbr_shader_res := asset.asset_server_load(
+	pbr_shader, pbr_shader_id, pbr_err := asset.asset_server_load(
 		server,
 		"game://shaders/pbr.wgsl",
 		graphics.Shader_Asset,
 	)
-	_ = errors.unwrap(pbr_shader_res)
 
-	// Resolve AssetIds
-	_, gltf_id_untyped, _ := asset.asset_schemas_resolve(
-		&server.registry,
-		"game://AnimatedTriangle.gltf",
+	pbr_skinned_shader, pbr_skinned_shader_id, pbr_skinned_err := asset.asset_server_load(
+		server,
+		"game://shaders/pbr_skinned.wgsl",
+		graphics.Shader_Asset,
 	)
-	gltf_id := asset.AssetId(asset.Gltf_Data) {
-		id = gltf_id_untyped,
-	}
-
-	_, obj_id_untyped, _ := asset.asset_schemas_resolve(&server.registry, "game://Wolf_One.obj")
-	obj_id := asset.AssetId(asset.Obj_Mesh) {
-		id = obj_id_untyped,
-	}
-
-	_, mtl_id_untyped, _ := asset.asset_schemas_resolve(&server.registry, "game://Wolf_One.mtl")
-	mtl_id := asset.AssetId(asset.Materials) {
-		id = mtl_id_untyped,
-	}
-
-	wolf_color := [4]f32{0.5, 0.5, 0.5, 1.0}
-	if mtl_data != nil {
-		if mat, ok := mtl_data.materials["Wolf_Body"]; ok {
-			wolf_color = {mat.diffuse.x, mat.diffuse.y, mat.diffuse.z, 1.0}
-		}
-		// Load textures referenced by any material
-		for _, mat in mtl_data.materials {
-			if len(mat.map_kd) > 0 {
-				// Normalize backslashes to forward slashes
-				clean_tex, _ := strings.replace_all(mat.map_kd, "\\", "/", context.temp_allocator)
-
-				// Strip any leading Blender-specific option switches (e.g., "-s 0.8 0.8 1.0")
-				fields := strings.fields(clean_tex, context.temp_allocator)
-				if len(fields) > 0 {
-					clean_tex = fields[len(fields) - 1]
-				}
-
-				// Find "textures/" substring and slice starting from that, or default to the file basename
-				tex_idx := strings.index(clean_tex, "textures/")
-				if tex_idx != -1 {
-					clean_tex = clean_tex[tex_idx:]
-				} else {
-					// Fallback: if "textures/" is not in path, try to find last slash to get basename
-					last_slash := strings.last_index(clean_tex, "/")
-					if last_slash != -1 {
-						clean_tex = fmt.tprintf("textures/%s", clean_tex[last_slash + 1:])
-					} else {
-						clean_tex = fmt.tprintf("textures/%s", clean_tex)
-					}
-				}
-
-				// Clean up any double slashes (e.g. "//") in the path
-				clean_tex, _ = strings.replace_all(clean_tex, "//", "/", context.temp_allocator)
-
-				tex_uri := fmt.tprintf("game://%s", clean_tex)
-				log.info("Loading material texture: %s", tex_uri)
-				_ = asset.asset_server_load(server, tex_uri, image.Image)
-			}
-		}
-	}
 
 	// 1. Spawn Perspective Camera
 	cam_ent := ecs.world_spawn(world)
@@ -152,24 +94,25 @@ model_setup :: proc(world: ^ecs.World) {
 	ecs.world_add_component(
 		world,
 		gltf_ent,
-		GltfModel{asset = gltf_id, color = {1.0, 1.0, 1.0, 1.0}},
+		GltfModel{asset = triangle_id, color = {1.0, 1.0, 1.0, 1.0}},
 	)
 
-	// 3. Spawn OBJ Entity
-	obj_ent := ecs.world_spawn(world)
-	obj_t: transform.Transform
-	transform.init(&obj_t)
-	transform.set_translation(&obj_t, {2.0, -1.0, 0.0})
-	transform.set_scale(&obj_t, {2.5, 2.5, 2.5})
+	// 3. Spawn Wolf GLTF Entity
+	wolf_ent := ecs.world_spawn(world)
+	wolf_t: transform.Transform
+	transform.init(&wolf_t)
+	transform.set_translation(&wolf_t, {2.0, -1.0, 0.0})
+	transform.set_scale(&wolf_t, {2.5, 2.5, 2.5})
 	// Face the camera slightly
 	rot := linalg.quaternion_angle_axis_f32(180.0 * math.RAD_PER_DEG, {0.0, 1.0, 0.0})
-	transform.set_rotation(&obj_t, rot)
-	ecs.world_add_component(world, obj_ent, obj_t)
+	transform.set_rotation(&wolf_t, rot)
+	ecs.world_add_component(world, wolf_ent, wolf_t)
 	ecs.world_add_component(
 		world,
-		obj_ent,
-		ObjModel{mesh = obj_id, materials = mtl_id, color = wolf_color},
+		wolf_ent,
+		GltfModel{asset = wolf_id, color = {1.0, 1.0, 1.0, 1.0}},
 	)
+	ecs.world_add_resource(world, Wolf_Render_State{}, destroy_wolf_render_state)
 }
 
 update_gltf_animation :: proc(data: ^cgltf.data, time_elapsed: f32) {
@@ -179,7 +122,7 @@ update_gltf_animation :: proc(data: ^cgltf.data, time_elapsed: f32) {
 		for channel in anim.channels {
 			node := channel.target_node
 			sampler := channel.sampler
-			if node == nil || sampler == nil do return
+			if node == nil || sampler == nil do continue
 
 			input := sampler.input
 			output := sampler.output
@@ -286,14 +229,17 @@ update_gltf_animation :: proc(data: ^cgltf.data, time_elapsed: f32) {
 
 draw_gltf_node :: proc(
 	batch: ^graphics.Batch3D,
-	data: ^cgltf.data,
+	model: ^asset.Gltf_Data,
 	n: ^cgltf.node,
 	color: [4]f32,
 	vp: linalg.Matrix4f32,
 	model_m4: linalg.Matrix4f32,
 	use_pbr: bool,
+	textures: []asset.Asset_Entry(wgpu.Texture),
 ) {
-	if n == nil do return
+	if n == nil || model == nil || model.raw_data == nil do return
+	if n.name != nil && string(n.name) == "Circle" do return
+	data := model.raw_data
 
 	mat: [16]f32
 	cgltf.node_transform_world(n, ([^]f32)(&mat[0]))
@@ -305,13 +251,35 @@ draw_gltf_node :: proc(
 	if n.mesh != nil {
 		for &prim in n.mesh.primitives {
 			pos_attr: ^cgltf.attribute = nil
+			uv_attr: ^cgltf.attribute = nil
 			for &attr in prim.attributes {
 				if attr.type == .position {
 					pos_attr = &attr
-					break
+				} else if attr.type == .texcoord && attr.index == 0 {
+					uv_attr = &attr
 				}
 			}
 			if pos_attr == nil do continue
+
+			// Resolve texture if available
+			tex_handle: wgpu.Texture = nil
+			if prim.material != nil && prim.material.has_pbr_metallic_roughness {
+				base_tex := prim.material.pbr_metallic_roughness.base_color_texture
+				if base_tex.texture != nil && base_tex.texture.image_ != nil {
+					uri := base_tex.texture.image_.uri
+					if uri != nil {
+						uri_str := string(uri)
+						if asset_id, found := model.textures[uri_str]; found {
+							for &tex_entry in textures {
+								if tex_entry.id.id.value == asset_id.id.value {
+									tex_handle = tex_entry.asset
+									break
+								}
+							}
+						}
+					}
+				}
+			}
 
 			base_idx := u32(len(batch.vertices))
 			accessor := pos_attr.data
@@ -335,6 +303,20 @@ draw_gltf_node :: proc(
 				)
 			}
 
+			uv_buffer: []f32 = nil
+			if uv_attr != nil {
+				uv_accessor := uv_attr.data
+				uv_buffer = make([]f32, count * 2, context.temp_allocator)
+				unpacked := cgltf.accessor_unpack_floats(
+					uv_accessor,
+					([^]f32)(raw_data(uv_buffer)),
+					uint(len(uv_buffer)),
+				)
+				if unpacked != uint(len(uv_buffer)) {
+					uv_buffer = nil
+				}
+			}
+
 			for i in 0 ..< count {
 				raw_pos := [3]f32 {
 					pos_buffer[i * 3 + 0],
@@ -352,9 +334,18 @@ draw_gltf_node :: proc(
 					final_pos = threeD.project_point(mvp, raw_pos)
 				}
 
-				append(&batch.vertices, graphics.Vertex3D{position = final_pos, color = color})
+				uv_coord: [2]f32 = {0.0, 0.0}
+				if uv_buffer != nil {
+					uv_coord = {uv_buffer[i * 2 + 0], uv_buffer[i * 2 + 1]}
+				}
+
+				append(
+					&batch.vertices,
+					graphics.Vertex3D{position = final_pos, color = color, uv = uv_coord},
+				)
 			}
 
+			start_idx := u32(len(batch.indices))
 			if prim.indices != nil {
 				idx_accessor := prim.indices
 				idx_count := idx_accessor.count
@@ -367,11 +358,18 @@ draw_gltf_node :: proc(
 					append(&batch.indices, base_idx + u32(i))
 				}
 			}
+
+			cmd := graphics.Draw_Command {
+				index_start = start_idx,
+				index_count = u32(len(batch.indices) - int(start_idx)),
+				texture     = tex_handle,
+			}
+			append(&batch.commands, cmd)
 		}
 	}
 
 	for child in n.children {
-		draw_gltf_node(batch, data, child, color, vp, model_m4, use_pbr)
+		draw_gltf_node(batch, model, child, color, vp, model_m4, use_pbr, textures)
 	}
 }
 
@@ -382,19 +380,20 @@ draw_gltf_model_hierarchical :: proc(
 	vp: linalg.Matrix4f32,
 	model_m4: linalg.Matrix4f32,
 	use_pbr: bool,
+	textures: []asset.Asset_Entry(wgpu.Texture),
 ) {
 	if model == nil || model.raw_data == nil do return
 	data := model.raw_data
 
 	if data.scene != nil {
 		for n in data.scene.nodes {
-			draw_gltf_node(batch, data, n, color, vp, model_m4, use_pbr)
+			draw_gltf_node(batch, model, n, color, vp, model_m4, use_pbr, textures)
 		}
 	} else {
 		for i in 0 ..< len(data.nodes) {
 			n := &data.nodes[i]
 			if n.parent == nil {
-				draw_gltf_node(batch, data, n, color, vp, model_m4, use_pbr)
+				draw_gltf_node(batch, model, n, color, vp, model_m4, use_pbr, textures)
 			}
 		}
 	}
@@ -413,9 +412,9 @@ model_update_system :: proc(
 			t: transform.Transform,
 			m: GltfModel,
 		}),
-	obj_query: params.Query(struct {
+	cam_query: params.Query(struct {
+			c: camera.Camera,
 			t: transform.Transform,
-			m: ObjModel,
 		}),
 ) {
 	active_scene := ecs.world_get_resource(world, ActiveScene)
@@ -447,7 +446,29 @@ model_update_system :: proc(
 		rot_x = m_delta.y * 0.01
 	}
 
-	// 2. Calculate rotation change from Gamepad Sticks
+	// 2. Calculate panning change from middle or right mouse drag
+	pan_x: f32 = 0.0
+	pan_y: f32 = 0.0
+	if input.is_down(mouse_inp, input.MouseButtonCode.Middle) || input.is_down(mouse_inp, input.MouseButtonCode.Right) {
+		m_delta := input.mouse_delta(mouse_inp)
+		pan_x = m_delta.x * 0.015
+		pan_y = m_delta.y * 0.015
+	}
+
+	if pan_x != 0.0 || pan_y != 0.0 {
+		for arch in params.query(cam_query) {
+			transforms := ecs.arch_get_field(arch, transform.Transform)
+			for i in 0 ..< len(transforms) {
+				t := &transforms[i]
+				pos := transform.get_translation(t^)
+				pos.x -= pan_x
+				pos.y += pan_y
+				transform.set_translation(t, pos)
+			}
+		}
+	}
+
+	// 3. Calculate rotation change from Gamepad Sticks
 	rx := input.gamepad_axis(gp_axes, .RightX)
 	ry := input.gamepad_axis(gp_axes, .RightY)
 	if rx == 0.0 && ry == 0.0 {
@@ -473,12 +494,37 @@ model_update_system :: proc(
 				transform.rotate_local(t, q_rot)
 			}
 		}
+	}
 
-		for arch in params.query(obj_query) {
+	// Calculate zoom amount
+	zoom_amount: f32 = 0.0
+
+	// 1. Mouse wheel zoom (scroll Y)
+	m_wheel := input.mouse_wheel(mouse_inp)
+	if m_wheel.y != 0.0 {
+		zoom_amount -= m_wheel.y * 0.5
+	}
+
+	// 2. Right trigger / Left trigger zoom
+	rt := input.gamepad_axis(gp_axes, .TriggerRight)
+	lt := input.gamepad_axis(gp_axes, .TriggerLeft)
+	if rt > 0.0 {
+		zoom_amount -= rt * dt * 5.0
+	}
+	if lt > 0.0 {
+		zoom_amount += lt * dt * 5.0
+	}
+
+	if zoom_amount != 0.0 {
+		for arch in params.query(cam_query) {
 			transforms := ecs.arch_get_field(arch, transform.Transform)
 			for i in 0 ..< len(transforms) {
 				t := &transforms[i]
-				transform.rotate_local(t, q_rot)
+				pos := transform.get_translation(t^)
+				pos.z += zoom_amount
+				if pos.z < 1.0 do pos.z = 1.0
+				if pos.z > 20.0 do pos.z = 20.0
+				transform.set_translation(t, pos)
 			}
 		}
 	}
@@ -490,7 +536,7 @@ model_update_system :: proc(
 			m := models[i]
 			for &entry in gltfs.assets {
 				if entry.id.id.value == m.asset.id.value {
-					update_gltf_animation(entry.asset.raw_data, t_elapsed)
+					graphics.update_gltf_animation(entry.asset.raw_data, t_elapsed)
 					break
 				}
 			}
@@ -498,9 +544,48 @@ model_update_system :: proc(
 	}
 }
 
-ModelLocalState :: struct {
-	pbr_shader_pass: graphics.Shader_Pass,
-	pbr_initialized: bool,
+Wolf_Render_State :: struct {
+	pbr_shader_pass:         graphics.Shader_Pass,
+	pbr_skinned_shader_pass: graphics.Shader_Pass,
+	pbr_initialized:         bool,
+	skinned_initialized:     bool,
+	wolf_submeshes:          []graphics.SkinnedSubMesh,
+	wolf_mesh_created:       bool,
+}
+
+destroy_wolf_render_state :: proc(state: ^Wolf_Render_State, alloc: runtime.Allocator) {
+	if state.wolf_mesh_created {
+		for &submesh in state.wolf_submeshes {
+			graphics.destroy_mesh(&submesh.mesh)
+			if submesh.uniform_buf != nil {
+				wgpu.BufferRelease(submesh.uniform_buf)
+				submesh.uniform_buf = nil
+			}
+			if submesh.bind_group != nil {
+				wgpu.BindGroupRelease(submesh.bind_group)
+				submesh.bind_group = nil
+			}
+			if submesh.tex_view != nil {
+				wgpu.TextureViewRelease(submesh.tex_view)
+				submesh.tex_view = nil
+			}
+			if submesh.fallback_tex != nil {
+				wgpu.TextureRelease(submesh.fallback_tex)
+				submesh.fallback_tex = nil
+			}
+		}
+		delete(state.wolf_submeshes)
+		state.wolf_submeshes = nil
+		state.wolf_mesh_created = false
+	}
+	if state.pbr_initialized {
+		graphics.destroy_shader_pass(&state.pbr_shader_pass)
+		state.pbr_initialized = false
+	}
+	if state.skinned_initialized {
+		graphics.destroy_shader_pass(&state.pbr_skinned_shader_pass)
+		state.skinned_initialized = false
+	}
 }
 
 model_draw_system :: proc(
@@ -511,24 +596,21 @@ model_draw_system :: proc(
 	pbr_config_res: params.Res(graphics.Pbr_Config),
 	render_ctx: params.Res(graphics.Render_Context),
 	gltfs: params.Assets(asset.Gltf_Data),
-	objs: params.Assets(asset.Obj_Mesh),
-	materials: params.Assets(asset.Materials),
 	images: params.Assets(image.Image),
 	shaders: params.Assets(graphics.Shader_Asset),
+	textures: params.Assets(wgpu.Texture),
 	gltf_query: params.Query(struct {
 			t: transform.Transform,
 			m: GltfModel,
-		}),
-	obj_query: params.Query(struct {
-			t: transform.Transform,
-			m: ObjModel,
 		}),
 	cam_query: params.Query(struct {
 			c: camera.Camera,
 			t: transform.Transform,
 		}),
-	local_state: params.Local(ModelLocalState),
 ) {
+	state := ecs.world_get_resource(world, Wolf_Render_State)
+	if state == nil do return
+
 	active_scene := ecs.world_get_resource(world, ActiveScene)
 	if active_scene == nil || active_scene.index != 2 do return
 
@@ -557,10 +639,7 @@ model_draw_system :: proc(
 	}
 
 	// 1. Initialize PBR shader pass from shader assets
-	if local_state.value.pbr_initialized == false &&
-	   render_ctx.ptr != nil &&
-	   render_ctx.ptr.device != nil {
-		// Resolve path to search for compiled module
+	if state.pbr_initialized == false && render_ctx.ptr != nil && render_ctx.ptr.device != nil {
 		_, pbr_id, ok := asset.asset_schemas_resolve(
 			&graphics.global_asset_server.registry,
 			"game://shaders/pbr.wgsl",
@@ -572,15 +651,24 @@ model_draw_system :: proc(
 					if pbr_config_res.ptr != nil {
 						sample_count = u32(pbr_config_res.ptr.antialiasing)
 					}
+					fallback_tex, fallback_view := graphics.create_fallback_texture(
+						render_ctx.ptr.device,
+						render_ctx.ptr.queue,
+					)
 					pass, pbr_ok := graphics.create_pbr_shader_pass(
 						render_ctx.ptr.device,
 						&entry.asset,
 						render_ctx.ptr.config.format,
 						sample_count,
+						fallback_view,
+						render_ctx.ptr.default_sampler,
 					)
+					wgpu.TextureViewRelease(fallback_view)
+					wgpu.TextureRelease(fallback_tex)
+
 					if pbr_ok {
-						local_state.value.pbr_shader_pass = pass
-						local_state.value.pbr_initialized = true
+						state.pbr_shader_pass = pass
+						state.pbr_initialized = true
 					}
 					break
 				}
@@ -588,25 +676,83 @@ model_draw_system :: proc(
 		}
 	}
 
-	use_pbr := local_state.value.pbr_initialized
+	if state.skinned_initialized == false &&
+	   render_ctx.ptr != nil &&
+	   render_ctx.ptr.device != nil {
+		_, pbr_id, ok := asset.asset_schemas_resolve(
+			&graphics.global_asset_server.registry,
+			"game://shaders/pbr_skinned.wgsl",
+		)
+		if ok {
+			for &entry in shaders.assets {
+				if entry.id.id.value == pbr_id.value {
+					sample_count: u32 = 1
+					if pbr_config_res.ptr != nil {
+						sample_count = u32(pbr_config_res.ptr.antialiasing)
+					}
+					fallback_tex, fallback_view := graphics.create_fallback_texture(
+						render_ctx.ptr.device,
+						render_ctx.ptr.queue,
+					)
+					pass, pbr_ok := graphics.create_pbr_skinned_shader_pass(
+						render_ctx.ptr.device,
+						&entry.asset,
+						render_ctx.ptr.config.format,
+						sample_count,
+						fallback_view,
+						render_ctx.ptr.default_sampler,
+					)
+					wgpu.TextureViewRelease(fallback_view)
+					wgpu.TextureRelease(fallback_tex)
+
+					if pbr_ok {
+						state.pbr_skinned_shader_pass = pass
+						state.skinned_initialized = true
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// Initialize wolf submeshes if needed
+	if state.wolf_mesh_created == false &&
+	   render_ctx.ptr != nil &&
+	   render_ctx.ptr.device != nil &&
+	   state.skinned_initialized {
+		for &entry in gltfs.assets {
+			if entry.asset.raw_data != nil && len(entry.asset.raw_data.skins) > 0 {
+				state.wolf_submeshes = graphics.build_skinned_submeshes(
+					render_ctx.ptr.device,
+					&entry.asset,
+					textures.assets,
+					state.pbr_skinned_shader_pass.bind_group_layout,
+				)
+				state.wolf_mesh_created = true
+				break
+			}
+		}
+	}
+
+	use_pbr := state.pbr_initialized
+	uniforms: graphics.Pbr_Uniforms
 
 	// 2. Setup PBR Uniforms if active
 	if use_pbr {
 		pass_idx := -1
 		for p, idx in batch.shader_passes {
-			if p.render_pipeline == local_state.value.pbr_shader_pass.render_pipeline {
+			if p.render_pipeline == state.pbr_shader_pass.render_pipeline {
 				pass_idx = idx
 				break
 			}
 		}
 		if pass_idx == -1 {
-			append(&batch.shader_passes, local_state.value.pbr_shader_pass)
+			append(&batch.shader_passes, state.pbr_shader_pass)
 			pass_idx = len(batch.shader_passes) - 1
 		}
 		batch.active_pass_idx = pass_idx
 
 		// Update Uniforms
-		uniforms: graphics.Pbr_Uniforms
 		uniforms.vp = vp
 		uniforms.model = linalg.MATRIX4F32_IDENTITY
 		uniforms.cam_pos = cam_pos
@@ -617,6 +763,53 @@ model_draw_system :: proc(
 			uniforms.roughness = pbr_config_res.ptr.roughness
 			uniforms.metallic = pbr_config_res.ptr.metallic
 			uniforms.ao = pbr_config_res.ptr.ao
+		}
+
+		// Collect lights from gltf models
+		gltf_lights := make([dynamic]graphics.Pbr_Light, context.temp_allocator)
+		for arch in params.query(gltf_query) {
+			transforms := ecs.arch_get_field(arch, transform.Transform)
+			models := ecs.arch_get_field(arch, GltfModel)
+			for i in 0 ..< len(transforms) {
+				t := transforms[i]
+				m := models[i]
+				for &entry in gltfs.assets {
+					if entry.id.id.value == m.asset.id.value {
+						if entry.asset.raw_data != nil {
+							data := entry.asset.raw_data
+							if data.scene != nil {
+								for n in data.scene.nodes {
+									graphics.collect_gltf_lights(
+										&entry.asset,
+										n,
+										t.world_matrix,
+										&gltf_lights,
+									)
+								}
+							} else {
+								for j in 0 ..< len(data.nodes) {
+									n := &data.nodes[j]
+									if n.parent == nil {
+										graphics.collect_gltf_lights(
+											&entry.asset,
+											n,
+											t.world_matrix,
+											&gltf_lights,
+										)
+									}
+								}
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+
+		for gl in gltf_lights {
+			if uniforms.num_lights >= 4 do break
+			uniforms.lights[uniforms.num_lights] = gl
+			uniforms.num_lights += 1
 		}
 
 		graphics.shader_pass_update_uniforms(
@@ -639,132 +832,30 @@ model_draw_system :: proc(
 			// Find GLTF data in Assets(Gltf_Data)
 			for &entry in gltfs.assets {
 				if entry.id.id.value == m.asset.id.value {
-					draw_gltf_model_hierarchical(
-						batch,
-						&entry.asset,
-						m.color,
-						vp,
-						t.world_matrix,
-						use_pbr,
-					)
-					break
-				}
-			}
-		}
-	}
-
-	// Draw OBJ models
-	for arch in params.query(obj_query) {
-		transforms := ecs.arch_get_field(arch, transform.Transform)
-		models := ecs.arch_get_field(arch, ObjModel)
-		for i in 0 ..< len(transforms) {
-			t := transforms[i]
-			m := models[i]
-
-			// Find OBJ data in Assets(Obj_Mesh)
-			for &entry in objs.assets {
-				if entry.id.id.value == m.mesh.id.value {
-					obj_ptr := &entry.asset
-					base_idx := u32(len(batch.vertices))
-
-					// Find map_kd texture if material exists
-					tex_ptr: ^image.Image = nil
-					for &mtl_entry in materials.assets {
-						if mtl_entry.id.id.value == m.materials.id.value {
-							mtl_data := &mtl_entry.asset
-							if mat, ok3 := mtl_data.materials["Wolf_Body"];
-							   ok3 && len(mat.map_kd) > 0 {
-								clean_tex, _ := strings.replace_all(
-									mat.map_kd,
-									"\\",
-									"/",
-									context.temp_allocator,
-								)
-								fields := strings.fields(clean_tex, context.temp_allocator)
-								if len(fields) > 0 do clean_tex = fields[len(fields) - 1]
-								tex_idx := strings.index(clean_tex, "textures/")
-								if tex_idx != -1 {
-									clean_tex = clean_tex[tex_idx:]
-								} else {
-									last_slash := strings.last_index(clean_tex, "/")
-									if last_slash != -1 {
-										clean_tex = fmt.tprintf(
-											"textures/%s",
-											clean_tex[last_slash + 1:],
-										)
-									} else {
-										clean_tex = fmt.tprintf("textures/%s", clean_tex)
-									}
-								}
-								clean_tex, _ = strings.replace_all(
-									clean_tex,
-									"//",
-									"/",
-									context.temp_allocator,
-								)
-
-								// Resolve untyped asset ID for texture
-								_, tex_id, _ := asset.asset_schemas_resolve(
-									&graphics.global_asset_server.registry,
-									fmt.tprintf("game://%s", clean_tex),
-								)
-								for &img_entry in images.assets {
-									if img_entry.id.id.value == tex_id.value {
-										tex_ptr = &img_entry.asset
-										break
-									}
-								}
-							}
-							break
-						}
-					}
-
-					for v, idx in obj_ptr.vertices {
-						v_color := m.color
-						if tex_ptr != nil && len(obj_ptr.texcoords) > idx {
-							uv := obj_ptr.texcoords[idx]
-							tx := int(uv.x * f32(tex_ptr.width)) % tex_ptr.width
-							ty := int((1.0 - uv.y) * f32(tex_ptr.height)) % tex_ptr.height
-							if tx < 0 do tx += tex_ptr.width
-							if ty < 0 do ty += tex_ptr.height
-
-							v_color = graphics.get_pixel(tex_ptr, tx, ty)
-						} else {
-							// Fallback to diffuse flat color
-							for &mtl_entry in materials.assets {
-								if mtl_entry.id.id.value == m.materials.id.value {
-									mtl_data := &mtl_entry.asset
-									if mat, ok3 := mtl_data.materials["Wolf_Body"]; ok3 {
-										v_color = {
-											mat.diffuse.x,
-											mat.diffuse.y,
-											mat.diffuse.z,
-											1.0,
-										}
-									}
-									break
-								}
-							}
-						}
-
-						final_pos: [3]f32
-						raw_pos := [3]f32{v[0], v[1], v[2]}
-						if use_pbr {
-							world_pos4 :=
-								t.world_matrix * [4]f32{raw_pos[0], raw_pos[1], raw_pos[2], 1.0}
-							final_pos = world_pos4.xyz
-						} else {
-							final_pos = threeD.project_point(vp * t.world_matrix, raw_pos)
-						}
-
-						append(
-							&batch.vertices,
-							graphics.Vertex3D{position = final_pos, color = v_color},
+					if entry.asset.raw_data != nil &&
+					   len(entry.asset.raw_data.skins) > 0 &&
+					   state.wolf_mesh_created {
+						graphics.batch3d_draw(
+							batch,
+							render_ctx.ptr.device,
+							render_ctx.ptr.queue,
+							&entry.asset,
+							state.wolf_submeshes,
+							uniforms,
+							t.world_matrix,
+							state.pbr_skinned_shader_pass.render_pipeline,
 						)
-					}
-
-					for idx in obj_ptr.indices {
-						append(&batch.indices, base_idx + idx)
+					} else {
+						graphics.batch3d_draw(
+							batch,
+							&entry.asset,
+							m.color,
+							vp,
+							t.world_matrix,
+							use_pbr,
+							textures.assets,
+							graphics.Gltf_Render_Config{exclude_nodes = {"Circle"}},
+						)
 					}
 					break
 				}
@@ -805,7 +896,7 @@ model_draw_system :: proc(
 		)
 		graphics.draw_text(
 			batch2d.ptr,
-			"Right: Wolf_One.obj (colored using Wolf_One.mtl)",
+			"Right: Wolf-Blender-2.82a.gltf (PBR & animated)",
 			-350 * ui_scale,
 			-230 * ui_scale,
 			font,
@@ -815,7 +906,7 @@ model_draw_system :: proc(
 		)
 		graphics.draw_text(
 			batch2d.ptr,
-			"Drag Mouse/Touch or use Gamepad Sticks to Rotate Wolf",
+			"Drag Mouse/Touch or use Gamepad Sticks to Rotate Models",
 			-350 * ui_scale,
 			-260 * ui_scale,
 			font,

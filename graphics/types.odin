@@ -13,8 +13,11 @@ Render_Context :: struct {
 	device:   wgpu.Device, // Logical GPU connection for resource creation.
 	queue:    wgpu.Queue, // Command queue to submit work to the GPU.
 	config:   wgpu.SurfaceConfiguration, // Display/format configuration for the render surface.
-	msaa_texture: wgpu.Texture,
-	msaa_view:    wgpu.TextureView,
+	msaa_texture:    wgpu.Texture,
+	msaa_view:       wgpu.TextureView,
+	depth_texture:   wgpu.Texture,
+	depth_view:      wgpu.TextureView,
+	default_sampler: wgpu.Sampler, // Default linear sampler for texture sampling.
 }
 
 // Frame_Context stores transient, per-frame resources used to record and encode
@@ -63,6 +66,15 @@ Vertex2D :: struct {
 Vertex3D :: struct {
 	position: [3]f32, // 3D position coordinates (X, Y, Z).
 	color:    [4]f32, // Normalized RGBA color coordinates [0.0 - 1.0].
+	uv:       [2]f32, // UV texture coordinates [0.0 - 1.0].
+	normal:   [3]f32, // 3D normal coordinates
+}
+
+// SkinnedVertex3D represents a 3D vertex with skeletal joint indices and weights.
+SkinnedVertex3D :: struct {
+	using base: Vertex3D,
+	joints:     [4]f32, // Joint indices matching bones
+	weights:    [4]f32, // Joint weights deforming vertices
 }
 
 
@@ -146,6 +158,15 @@ Batch2D :: struct {
 	clip_enabled:    bool, // Whether clipping is enabled
 }
 
+Draw_Command :: struct {
+	index_start: u32,
+	index_count: u32,
+	texture:     wgpu.Texture,
+	mesh:        ^Mesh,
+	bind_group:  wgpu.BindGroup,
+	pipeline:    wgpu.RenderPipeline,
+}
+
 // Batch3D manages dynamic batches of 3D lines/triangles, uploading them to GPU buffers.
 // It supports custom shader passes (Compute and Render stages).
 Batch3D :: struct {
@@ -158,6 +179,7 @@ Batch3D :: struct {
 	ind_buf_cap:     int, // Current capacity in bytes of index_buf.
 	shader_passes:   [dynamic]Shader_Pass, // Registered custom shader passes.
 	active_pass_idx: int, // Index of the active custom pass. -1 uses default.
+	commands:        [dynamic]Draw_Command, // List of sub-draw commands.
 }
 
 // A Render_Target wraps an offscreen texture, view, and layout details for rendering.
