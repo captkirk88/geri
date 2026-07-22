@@ -58,6 +58,11 @@ struct Vertex {
     color_g: f32,
     color_b: f32,
     color_a: f32,
+    uv_u: f32,
+    uv_v: f32,
+    normal_x: f32,
+    normal_y: f32,
+    normal_z: f32,
 }
 struct MyUniforms {
 	time: f32,
@@ -388,11 +393,10 @@ draw_shader_system :: proc(
 	graphics.batch3d_set_active_pass(batch, render_pass_idx)
 
 	color := wgpu.Color{0.05, 0.08, 0.12, 1.0}
-	render_pass := graphics.begin_frame_render_pass(frame_ctx, .Load, color)
+	render_pass := graphics.begin_frame_render_pass(render_ctx, frame_ctx, .Load, color)
 	defer graphics.end_render_pass(render_pass)
 
-
-	graphics.batch3d_draw_buffers(batch, render_pass, u32(shader_data.index_count))
+	graphics.batch3d_draw_buffers(batch, render_ctx, render_pass, u32(shader_data.index_count))
 }
 
 cleanup_shader_system :: proc(

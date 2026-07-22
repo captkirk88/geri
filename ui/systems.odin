@@ -48,7 +48,7 @@ ui_canvas_target_init_observer :: proc(w: ^ecs.World, e: ecs.Entity) {
 	if target != nil {
 		ctx := ecs.world_get_resource(w, graphics.Render_Context)
 		if ctx != nil {
-			target.batch = graphics.init_batch2d(ctx.device, target.target.format)
+			target.batch = graphics.init_batch2d(ctx.device, target.target.format, enable_depth = false)
 		}
 	}
 }

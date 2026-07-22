@@ -76,4 +76,14 @@ new_animated_sprite :: proc(
 		camera = camera,
 	}
 }
+Point_Light :: struct {
+	intensity: f32,
+	color:     [3]f32,
+	radius:    f32,
+}
 
+// Component to target specific models with explicit lighting instead of global origin
+Light_Target :: struct {
+	light_entities: [4]ecs.Entity,
+	num_targets:    i32,
+}

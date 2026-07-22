@@ -7,16 +7,24 @@ import "vendor:wgpu"
 // Render_Context manages the global WebGPU handles required to interface with the GPU adapter,
 // device, command queue, and configure render surfaces.
 Render_Context :: struct {
-	instance: wgpu.Instance, // Handle to the global WGPU instance.
-	surface:  wgpu.Surface, // OS-specific window surface for rendering.
-	adapter:  wgpu.Adapter, // Hardware device adapter (physical GPU info).
-	device:   wgpu.Device, // Logical GPU connection for resource creation.
-	queue:    wgpu.Queue, // Command queue to submit work to the GPU.
-	config:   wgpu.SurfaceConfiguration, // Display/format configuration for the render surface.
+	instance:        wgpu.Instance, // Handle to the global WGPU instance.
+	surface:         wgpu.Surface, // OS-specific window surface for rendering.
+	adapter:         wgpu.Adapter, // Hardware device adapter (physical GPU info).
+	device:          wgpu.Device, // Logical GPU connection for resource creation.
+	queue:           wgpu.Queue, // Command queue to submit work to the GPU.
+	config:          wgpu.SurfaceConfiguration, // Display/format configuration for the render surface.
 	msaa_texture:    wgpu.Texture,
 	msaa_view:       wgpu.TextureView,
 	depth_texture:   wgpu.Texture,
 	depth_view:      wgpu.TextureView,
+	normal_texture:  wgpu.Texture,
+	normal_view:     wgpu.TextureView,
+	ssao_texture:    wgpu.Texture,
+	ssao_view:       wgpu.TextureView,
+	ssao_blur_tex:   wgpu.Texture,
+	ssao_blur_view:  wgpu.TextureView,
+	hdr_texture:     wgpu.Texture,
+	hdr_view:        wgpu.TextureView,
 	default_sampler: wgpu.Sampler, // Default linear sampler for texture sampling.
 }
 

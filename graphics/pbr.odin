@@ -11,14 +11,8 @@ Pbr_Light :: struct {
 	radius:    f32,
 }
 
-Antialiasing_Mode :: enum {
-	None    = 1,
-	MSAA_4x = 4,
-}
 
 Pbr_Config :: struct {
-	lights:       [4]Pbr_Light,
-	num_lights:   i32,
 	roughness:    f32,
 	metallic:     f32,
 	ao:           f32,

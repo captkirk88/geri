@@ -26,6 +26,16 @@ ui_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Error, 
 	}
 	ecs.world_add_resource(&a.world, config)
 
+	// Ensure a default graphics.Font resource is registered for UI text rendering
+	if ecs.world_get_resource(&a.world, graphics.Font) == nil {
+		font: graphics.Font
+		if graphics.font_init(&font, "C:\\Windows\\Fonts\\arial.ttf", 32.0) {
+			ecs.world_add_resource(&a.world, font, proc(f: ^graphics.Font, alloc: runtime.Allocator) {
+				graphics.font_destroy(f)
+			})
+		}
+	}
+
 	// Initialize observers for dirty flag and cascading despawn
 	ui_observer_init(&a.world)
 

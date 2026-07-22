@@ -126,7 +126,8 @@ render_create_pipeline :: proc(
 	shader: wgpu.ShaderModule,
 	vertex_layout: wgpu.VertexBufferLayout,
 	color_target: wgpu.ColorTargetState,
-	blend_state: ^wgpu.BlendState, // nullable
+	blend_state: ^wgpu.BlendState = nil, // nullable
+	depth_stencil_state: ^wgpu.DepthStencilState = nil, // nullable, defaults to Depth24Plus if nil
 ) -> wgpu.RenderPipeline {
 	if ctx == nil || ctx.device == nil do return nil
 	// Default blend matches the original implementation.
@@ -150,17 +151,22 @@ render_create_pipeline :: proc(
 		targets     = &mutable_target,
 	}
 	v_layout := vertex_layout
-	depth_stencil_state := wgpu.DepthStencilState {
-		format = .Depth24Plus,
-		depthWriteEnabled = .False,
-		depthCompare = .Always,
+	var_depth_stencil := depth_stencil_state
+	default_depth: wgpu.DepthStencilState
+	if var_depth_stencil == nil && ctx.depth_view != nil {
+		default_depth = wgpu.DepthStencilState {
+			format = .Depth24Plus,
+			depthWriteEnabled = .False,
+			depthCompare = .Always,
+		}
+		var_depth_stencil = &default_depth
 	}
 	pipeline_desc := wgpu.RenderPipelineDescriptor {
 		layout = layout,
 		vertex = {module = shader, entryPoint = "vs_main", bufferCount = 1, buffers = &v_layout},
 		primitive = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
 		multisample = {count = 1, mask = 0xFFFFFFFF, alphaToCoverageEnabled = false},
-		depthStencil = &depth_stencil_state,
+		depthStencil = var_depth_stencil,
 		fragment = &fragment_state,
 	}
 
@@ -172,6 +178,7 @@ main_render_system :: proc(
 	ctx_res: params.Res(Render_Context),
 	fctx_res: params.Res(Frame_Context),
 	clear_color: params.Res(Clear_Color),
+	gfx_config: params.Res(Graphics_Config),
 	batch2d: params.Res(Batch2D),
 	batch3d: params.Res(Batch3D),
 ) {
@@ -180,7 +187,6 @@ main_render_system :: proc(
 	if ctx == nil || ctx.device == nil do return
 
 	if fctx.encoder == nil || fctx.texture_view == nil do return
-
 
 	color: wgpu.Color
 	if clear_color.ptr != nil {

@@ -476,6 +476,12 @@ build_skinned_submeshes :: proc(
 					node_m4 = transmute(linalg.Matrix4f32)mat
 				}
 
+				color_factor: [4]f32 = {1.0, 1.0, 1.0, 1.0}
+				if prim.material != nil && prim.material.has_pbr_metallic_roughness {
+					factor := prim.material.pbr_metallic_roughness.base_color_factor
+					color_factor = {factor[0], factor[1], factor[2], factor[3]}
+				}
+
 				for i in 0 ..< count {
 					raw_pos := [3]f32{
 						pos_buffer[i * 3 + 0],
@@ -501,7 +507,7 @@ build_skinned_submeshes :: proc(
 						}
 					}
 
-					joints_val: [4]f32 = {63.0, 0.0, 0.0, 0.0}
+					joints_val: [4]f32 = {0.0, 0.0, 0.0, 0.0}
 					if joints_buffer != nil {
 						joints_val = {
 							joints_buffer[i * 4 + 0],
@@ -524,7 +530,7 @@ build_skinned_submeshes :: proc(
 					vertices[i] = SkinnedVertex3D {
 						base = Vertex3D {
 							position = raw_pos,
-							color    = {1.0, 1.0, 1.0, 1.0},
+							color    = color_factor,
 							uv       = uv_coord,
 							normal   = normal_val,
 						},

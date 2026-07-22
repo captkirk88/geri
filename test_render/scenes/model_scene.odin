@@ -18,6 +18,7 @@ import "../../ecs"
 import "../../ecs/params"
 import "../../errors"
 import "../../graphics"
+import components "../../graphics/components"
 import threeD "../../graphics/3d"
 import "../../input"
 import log "../../logging"
@@ -97,7 +98,30 @@ model_setup :: proc(world: ^ecs.World) {
 		GltfModel{asset = triangle_id, color = {1.0, 1.0, 1.0, 1.0}},
 	)
 
-	// 3. Spawn Wolf GLTF Entity
+	// 3. Spawn Point Light entities (ECS Light components)
+	light1 := ecs.world_spawn(world)
+	light1_t: transform.Transform
+	transform.init(&light1_t)
+	transform.set_translation(&light1_t, {5.0, 5.0, 5.0})
+	ecs.world_add_component(world, light1, light1_t)
+	ecs.world_add_component(
+		world,
+		light1,
+		components.Point_Light{intensity = 1.0, color = {1.0, 1.0, 1.0}, radius = 20.0},
+	)
+
+	light2 := ecs.world_spawn(world)
+	light2_t: transform.Transform
+	transform.init(&light2_t)
+	transform.set_translation(&light2_t, {-5.0, 5.0, -5.0})
+	ecs.world_add_component(world, light2, light2_t)
+	ecs.world_add_component(
+		world,
+		light2,
+		components.Point_Light{intensity = 0.5, color = {0.8, 0.9, 1.0}, radius = 20.0},
+	)
+
+	// 4. Spawn Wolf GLTF Entity
 	wolf_ent := ecs.world_spawn(world)
 	wolf_t: transform.Transform
 	transform.init(&wolf_t)
@@ -111,6 +135,14 @@ model_setup :: proc(world: ^ecs.World) {
 		world,
 		wolf_ent,
 		GltfModel{asset = wolf_id, color = {1.0, 1.0, 1.0, 1.0}},
+	)
+	ecs.world_add_component(
+		world,
+		wolf_ent,
+		components.Light_Target{
+			light_entities = {light1, light2, {}, {}},
+			num_targets    = 2,
+		},
 	)
 	ecs.world_add_resource(world, Wolf_Render_State{}, destroy_wolf_render_state)
 }
@@ -261,10 +293,14 @@ draw_gltf_node :: proc(
 			}
 			if pos_attr == nil do continue
 
-			// Resolve texture if available
+			// Resolve texture and base color factor if available
 			tex_handle: wgpu.Texture = nil
+			vertex_color := color
 			if prim.material != nil && prim.material.has_pbr_metallic_roughness {
-				base_tex := prim.material.pbr_metallic_roughness.base_color_texture
+				pbr_mat := &prim.material.pbr_metallic_roughness
+				factor := pbr_mat.base_color_factor
+				vertex_color = {factor[0] * color[0], factor[1] * color[1], factor[2] * color[2], factor[3] * color[3]}
+				base_tex := pbr_mat.base_color_texture
 				if base_tex.texture != nil && base_tex.texture.image_ != nil {
 					uri := base_tex.texture.image_.uri
 					if uri != nil {
@@ -341,7 +377,7 @@ draw_gltf_node :: proc(
 
 				append(
 					&batch.vertices,
-					graphics.Vertex3D{position = final_pos, color = color, uv = uv_coord},
+					graphics.Vertex3D{position = final_pos, color = vertex_color, uv = uv_coord},
 				)
 			}
 
@@ -593,7 +629,7 @@ model_draw_system :: proc(
 	batch3d: params.Res(graphics.Batch3D),
 	batch2d: params.Res(graphics.Batch2D),
 	window_res: params.Res(windowing.Window_Context),
-	pbr_config_res: params.Res(graphics.Pbr_Config),
+	gfx_config_res: params.Res(graphics.Graphics_Config),
 	render_ctx: params.Res(graphics.Render_Context),
 	gltfs: params.Assets(asset.Gltf_Data),
 	images: params.Assets(image.Image),
@@ -606,6 +642,10 @@ model_draw_system :: proc(
 	cam_query: params.Query(struct {
 			c: camera.Camera,
 			t: transform.Transform,
+		}),
+	light_query: params.Query(struct {
+			t: transform.Transform,
+			l: components.Point_Light,
 		}),
 ) {
 	state := ecs.world_get_resource(world, Wolf_Render_State)
@@ -648,8 +688,8 @@ model_draw_system :: proc(
 			for &entry in shaders.assets {
 				if entry.id.id.value == pbr_id.value {
 					sample_count: u32 = 1
-					if pbr_config_res.ptr != nil {
-						sample_count = u32(pbr_config_res.ptr.antialiasing)
+					if gfx_config_res.ptr != nil {
+						sample_count = graphics.antialiasing_sample_count(gfx_config_res.ptr.antialiasing)
 					}
 					fallback_tex, fallback_view := graphics.create_fallback_texture(
 						render_ctx.ptr.device,
@@ -687,8 +727,8 @@ model_draw_system :: proc(
 			for &entry in shaders.assets {
 				if entry.id.id.value == pbr_id.value {
 					sample_count: u32 = 1
-					if pbr_config_res.ptr != nil {
-						sample_count = u32(pbr_config_res.ptr.antialiasing)
+					if gfx_config_res.ptr != nil {
+						sample_count = graphics.antialiasing_sample_count(gfx_config_res.ptr.antialiasing)
 					}
 					fallback_tex, fallback_view := graphics.create_fallback_texture(
 						render_ctx.ptr.device,
@@ -757,20 +797,35 @@ model_draw_system :: proc(
 		uniforms.model = linalg.MATRIX4F32_IDENTITY
 		uniforms.cam_pos = cam_pos
 
-		if pbr_config_res.ptr != nil {
-			uniforms.lights = pbr_config_res.ptr.lights
-			uniforms.num_lights = pbr_config_res.ptr.num_lights
-			uniforms.roughness = pbr_config_res.ptr.roughness
-			uniforms.metallic = pbr_config_res.ptr.metallic
-			uniforms.ao = pbr_config_res.ptr.ao
+		if gfx_config_res.ptr != nil {
+			uniforms.roughness = gfx_config_res.ptr.pbr.roughness
+			uniforms.metallic = gfx_config_res.ptr.pbr.metallic
+			uniforms.ao = gfx_config_res.ptr.pbr.ao
 		}
+
+		// Dynamically gather lights from ECS Point_Light entities using arch_zip
+		num_lights: i32 = 0
+		for arch in params.query(light_query) {
+			transforms, lights, count := ecs.arch_zip(arch, transform.Transform, components.Point_Light)
+			for i in 0 ..< count {
+				if num_lights >= 4 do break
+				pos := transform.get_translation(transforms[i])
+				uniforms.lights[num_lights] = graphics.Pbr_Light {
+					position  = pos,
+					intensity = lights[i].intensity,
+					color     = lights[i].color,
+					radius    = lights[i].radius,
+				}
+				num_lights += 1
+			}
+		}
+		uniforms.num_lights = num_lights
 
 		// Collect lights from gltf models
 		gltf_lights := make([dynamic]graphics.Pbr_Light, context.temp_allocator)
 		for arch in params.query(gltf_query) {
-			transforms := ecs.arch_get_field(arch, transform.Transform)
-			models := ecs.arch_get_field(arch, GltfModel)
-			for i in 0 ..< len(transforms) {
+			transforms, models, count := ecs.arch_zip(arch, transform.Transform, GltfModel)
+			for i in 0 ..< count {
 				t := transforms[i]
 				m := models[i]
 				for &entry in gltfs.assets {

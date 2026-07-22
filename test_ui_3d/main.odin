@@ -527,7 +527,7 @@ sphere_ui_render_system :: proc(
 		u64(size_of(Sphere_UI_Uniforms)),
 	)
 
-	pass := graphics.begin_frame_render_pass(fctx_res.ptr, .Load)
+	pass := graphics.begin_frame_render_pass(render_ctx.ptr, fctx_res.ptr, .Load)
 	defer graphics.end_render_pass(pass)
 
 	bg_entries := [2]wgpu.BindGroupEntry {

@@ -37,6 +37,7 @@ init_batch2d :: proc(
 	format: wgpu.TextureFormat,
 	source: Shader_Source = nil,
 	multisample_count: u32 = 1,
+	enable_depth: bool = true,
 ) -> Batch2D {
 	batch := Batch2D{}
 	batch.vertices = make([dynamic]Vertex2D)
@@ -110,7 +111,7 @@ init_batch2d :: proc(
 			mask = 0xFFFFFFFF,
 			alphaToCoverageEnabled = false,
 		},
-		depthStencil = &depth_stencil_state,
+		depthStencil = enable_depth ? &depth_stencil_state : nil,
 		fragment = &fragment_state,
 	}
 

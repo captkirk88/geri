@@ -65,6 +65,10 @@ scenes_list := []Scene {
 		name = "Models",
 		init = scenes.model_setup,
 		exit = proc(world: ^ecs.World) -> (errors.Error, bool) {
+			st := ecs.world_get_resource(world, scenes.Wolf_Render_State)
+			if st != nil {
+				scenes.destroy_wolf_render_state(st, context.allocator)
+			}
 			ecs.world_remove_resource(world, scenes.Wolf_Render_State)
 			ecs.world_clear(world)
 			return {}, true
@@ -99,8 +103,9 @@ scene_transition_system :: proc(
 
 	for event in sdl_events.events {
 		if event.type == .KEY_DOWN && event.key.key == sdl3.K_ESCAPE {
-			ecs.emit(world, app.App_Exit_Event{})
-			return
+			should_transition = true
+			elapsed.value^ = 0.0
+			break
 		}
 	}
 
@@ -164,11 +169,9 @@ movement_system :: proc(
 
 	// This system queries Circle movement.
 	for arch in ecs.query(world, transform.Transform, scenes.Velocity2D) {
-		transforms := ecs.arch_get_field(arch, transform.Transform)
-		velocities := ecs.arch_get_field(arch, scenes.Velocity2D)
-		circles := ecs.arch_get_field(arch, scenes.Circle)
+		transforms, velocities, circles, count := ecs.arch_zip(arch, transform.Transform, scenes.Velocity2D, scenes.Circle)
 
-		for i in 0 ..< len(transforms) {
+		for i in 0 ..< count {
 			t := &transforms[i]
 			vel := &velocities[i]
 			circle := circles[i]

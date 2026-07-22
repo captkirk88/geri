@@ -24,7 +24,7 @@ import "vendor:wgpu/sdl3glue"
 
 global_render_context: ^Render_Context
 
-recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
+recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32, hdr: bool = false) {
 	if ctx.msaa_view != nil {
 		wgpu.TextureViewRelease(ctx.msaa_view)
 		ctx.msaa_view = nil
@@ -40,6 +40,38 @@ recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
 	if ctx.depth_texture != nil {
 		wgpu.TextureRelease(ctx.depth_texture)
 		ctx.depth_texture = nil
+	}
+	if ctx.normal_view != nil {
+		wgpu.TextureViewRelease(ctx.normal_view)
+		ctx.normal_view = nil
+	}
+	if ctx.normal_texture != nil {
+		wgpu.TextureRelease(ctx.normal_texture)
+		ctx.normal_texture = nil
+	}
+	if ctx.ssao_view != nil {
+		wgpu.TextureViewRelease(ctx.ssao_view)
+		ctx.ssao_view = nil
+	}
+	if ctx.ssao_texture != nil {
+		wgpu.TextureRelease(ctx.ssao_texture)
+		ctx.ssao_texture = nil
+	}
+	if ctx.ssao_blur_view != nil {
+		wgpu.TextureViewRelease(ctx.ssao_blur_view)
+		ctx.ssao_blur_view = nil
+	}
+	if ctx.ssao_blur_tex != nil {
+		wgpu.TextureRelease(ctx.ssao_blur_tex)
+		ctx.ssao_blur_tex = nil
+	}
+	if ctx.hdr_view != nil {
+		wgpu.TextureViewRelease(ctx.hdr_view)
+		ctx.hdr_view = nil
+	}
+	if ctx.hdr_texture != nil {
+		wgpu.TextureRelease(ctx.hdr_texture)
+		ctx.hdr_texture = nil
 	}
 
 	if sample_count > 1 {
@@ -58,7 +90,7 @@ recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
 	}
 
 	depth_desc := wgpu.TextureDescriptor {
-		usage         = {.RenderAttachment},
+		usage         = {.RenderAttachment, .TextureBinding},
 		dimension     = ._2D,
 		size          = {ctx.config.width, ctx.config.height, 1},
 		format        = .Depth24Plus,
@@ -68,6 +100,56 @@ recreate_msaa_texture :: proc(ctx: ^Render_Context, sample_count: u32) {
 	ctx.depth_texture = wgpu.DeviceCreateTexture(ctx.device, &depth_desc)
 	if ctx.depth_texture != nil {
 		ctx.depth_view = wgpu.TextureCreateView(ctx.depth_texture, nil)
+	}
+
+	// Normal Texture (View-space normals for SSAO pass)
+	normal_desc := wgpu.TextureDescriptor {
+		usage         = {.RenderAttachment, .TextureBinding},
+		dimension     = ._2D,
+		size          = {ctx.config.width, ctx.config.height, 1},
+		format        = .RGBA16Float,
+		mipLevelCount = 1,
+		sampleCount   = 1,
+	}
+	ctx.normal_texture = wgpu.DeviceCreateTexture(ctx.device, &normal_desc)
+	if ctx.normal_texture != nil {
+		ctx.normal_view = wgpu.TextureCreateView(ctx.normal_texture, nil)
+	}
+
+	// SSAO Raw Target
+	ssao_desc := wgpu.TextureDescriptor {
+		usage         = {.RenderAttachment, .TextureBinding},
+		dimension     = ._2D,
+		size          = {ctx.config.width, ctx.config.height, 1},
+		format        = .R8Unorm,
+		mipLevelCount = 1,
+		sampleCount   = 1,
+	}
+	ctx.ssao_texture = wgpu.DeviceCreateTexture(ctx.device, &ssao_desc)
+	if ctx.ssao_texture != nil {
+		ctx.ssao_view = wgpu.TextureCreateView(ctx.ssao_texture, nil)
+	}
+
+	// SSAO Blur Target
+	ctx.ssao_blur_tex = wgpu.DeviceCreateTexture(ctx.device, &ssao_desc)
+	if ctx.ssao_blur_tex != nil {
+		ctx.ssao_blur_view = wgpu.TextureCreateView(ctx.ssao_blur_tex, nil)
+	}
+
+	// HDR Target
+	if hdr {
+		hdr_desc := wgpu.TextureDescriptor {
+			usage         = {.RenderAttachment, .TextureBinding},
+			dimension     = ._2D,
+			size          = {ctx.config.width, ctx.config.height, 1},
+			format        = .RGBA16Float,
+			mipLevelCount = 1,
+			sampleCount   = 1,
+		}
+		ctx.hdr_texture = wgpu.DeviceCreateTexture(ctx.device, &hdr_desc)
+		if ctx.hdr_texture != nil {
+			ctx.hdr_view = wgpu.TextureCreateView(ctx.hdr_texture, nil)
+		}
 	}
 }
 
@@ -465,38 +547,28 @@ render_plugin_build :: proc(plugin: app.Plugin, a: ^app.App) -> (err: errors.Err
 		default_sampler = default_sampler,
 	}
 
-	pbr_config := Pbr_Config {
-		lights       = {
-			{position = {5.0, 5.0, 5.0}, intensity = 1.0, color = {1.0, 1.0, 1.0}, radius = 20.0},
-			{
-				position = {-5.0, 5.0, -5.0},
-				intensity = 0.5,
-				color = {0.8, 0.9, 1.0},
-				radius = 20.0,
-			},
-			{},
-			{},
-		},
-		num_lights   = 2,
-		roughness    = 0.4,
-		metallic     = 0.5,
+	gfx_config := default_graphics_config()
+	gfx_config.pbr = Pbr_Config {
+		roughness    = 0.8,
+		metallic     = 0.0,
 		ao           = 1.0,
 		antialiasing = .MSAA_4x,
 	}
 
-	recreate_msaa_texture(&render_ctx, u32(pbr_config.antialiasing))
+	recreate_msaa_texture(&render_ctx, antialiasing_sample_count(gfx_config.antialiasing), gfx_config.hdr)
 
 	app.app_add_resource(a, render_ctx)
-	app.app_add_resource(a, pbr_config)
+	app.app_add_resource(a, gfx_config)
 	app.app_add_resource(a, Frame_Context{})
 	app.app_add_resource(a, Clear_Color{})
 
 	render_ctx_ptr := ecs.world_get_resource(&a.world, Render_Context)
 	global_render_context = render_ctx_ptr
 
-	batch2d := init_batch2d(req_data.device, config.format, nil, u32(pbr_config.antialiasing))
+	sample_count := antialiasing_sample_count(gfx_config.antialiasing)
+	batch2d := init_batch2d(req_data.device, config.format, nil, sample_count)
 	app.app_add_resource(a, batch2d)
-	batch3d := init_batch3d(req_data.device, config.format, nil, u32(pbr_config.antialiasing))
+	batch3d := init_batch3d(req_data.device, config.format, nil, sample_count)
 	app.app_add_resource(a, batch3d)
 
 	// Set up Asset Loaders if AssetServer exists
@@ -704,6 +776,47 @@ render_cleanup_system :: proc(
 			if render_ctx.ptr.default_sampler != nil {
 				wgpu.SamplerRelease(render_ctx.ptr.default_sampler)
 				render_ctx.ptr.default_sampler = nil
+			}
+
+			if render_ctx.ptr.depth_view != nil {
+				wgpu.TextureViewRelease(render_ctx.ptr.depth_view)
+				render_ctx.ptr.depth_view = nil
+			}
+			if render_ctx.ptr.depth_texture != nil {
+				wgpu.TextureRelease(render_ctx.ptr.depth_texture)
+				render_ctx.ptr.depth_texture = nil
+			}
+			if render_ctx.ptr.normal_view != nil {
+				wgpu.TextureViewRelease(render_ctx.ptr.normal_view)
+				render_ctx.ptr.normal_view = nil
+			}
+			if render_ctx.ptr.normal_texture != nil {
+				wgpu.TextureRelease(render_ctx.ptr.normal_texture)
+				render_ctx.ptr.normal_texture = nil
+			}
+			if render_ctx.ptr.ssao_view != nil {
+				wgpu.TextureViewRelease(render_ctx.ptr.ssao_view)
+				render_ctx.ptr.ssao_view = nil
+			}
+			if render_ctx.ptr.ssao_texture != nil {
+				wgpu.TextureRelease(render_ctx.ptr.ssao_texture)
+				render_ctx.ptr.ssao_texture = nil
+			}
+			if render_ctx.ptr.ssao_blur_view != nil {
+				wgpu.TextureViewRelease(render_ctx.ptr.ssao_blur_view)
+				render_ctx.ptr.ssao_blur_view = nil
+			}
+			if render_ctx.ptr.ssao_blur_tex != nil {
+				wgpu.TextureRelease(render_ctx.ptr.ssao_blur_tex)
+				render_ctx.ptr.ssao_blur_tex = nil
+			}
+			if render_ctx.ptr.hdr_view != nil {
+				wgpu.TextureViewRelease(render_ctx.ptr.hdr_view)
+				render_ctx.ptr.hdr_view = nil
+			}
+			if render_ctx.ptr.hdr_texture != nil {
+				wgpu.TextureRelease(render_ctx.ptr.hdr_texture)
+				render_ctx.ptr.hdr_texture = nil
 			}
 
 			if render_ctx.ptr.msaa_view != nil {

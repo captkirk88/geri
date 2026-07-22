@@ -147,6 +147,30 @@ arch_get_field :: proc(arch: ^Archetype, $T: typeid) -> []T {
 }
 
 /*
+    Retrieves two component slices from an archetype simultaneously, returning their slices and count.
+    Used for clean and ergonomic multi-component iteration.
+*/
+arch_zip_2 :: proc(arch: ^Archetype, $A: typeid, $B: typeid) -> ([]A, []B, int) {
+	a_slice := arch_get_field(arch, A)
+	b_slice := arch_get_field(arch, B)
+	count := min(len(a_slice), len(b_slice))
+	return a_slice[:count], b_slice[:count], count
+}
+
+arch_zip_3 :: proc(arch: ^Archetype, $A: typeid, $B: typeid, $C: typeid) -> ([]A, []B, []C, int) {
+	a_slice := arch_get_field(arch, A)
+	b_slice := arch_get_field(arch, B)
+	c_slice := arch_get_field(arch, C)
+	count := min(len(a_slice), min(len(b_slice), len(c_slice)))
+	return a_slice[:count], b_slice[:count], c_slice[:count], count
+}
+
+arch_zip :: proc {
+	arch_zip_2,
+	arch_zip_3,
+}
+
+/*
     Returns a pointer to a component of type T at a specific row in the archetype.
 */
 arch_get_component :: proc(arch: ^Archetype, row: int, $T: typeid) -> ^T {

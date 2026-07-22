@@ -136,10 +136,8 @@ circles_draw_system :: proc(
 	vp := graphics.resolve_camera_vp(world, {})
 
 	for arch in ecs.query(world, transform.Transform, Circle) {
-		transforms := ecs.arch_get_field(arch, transform.Transform)
-		circles := ecs.arch_get_field(arch, Circle)
-
-		for i in 0 ..< len(transforms) {
+		transforms, circles, count := ecs.arch_zip(arch, transform.Transform, Circle)
+		for i in 0 ..< count {
 			pos := transform.get_translation(transforms[i])
 			circle := circles[i]
 			append_circle(batch, pos.xy, circle.radius, circle.color, vp)

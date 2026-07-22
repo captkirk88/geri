@@ -153,10 +153,10 @@ fps_plugin_build_impl :: proc(settings: Fps_Settings, plugin: app.Plugin, a: ^ap
 	if render_ctx == nil || render_ctx.device == nil {
 		return errors.new("Render_Plugin not initialized — Render_Context missing"), false
 	}
-	pbr_config := ecs.world_get_resource(&a.world, graphics.Pbr_Config)
+	gfx_config := ecs.world_get_resource(&a.world, graphics.Graphics_Config)
 	sample_count: u32 = 1
-	if pbr_config != nil {
-		sample_count = u32(pbr_config.antialiasing)
+	if gfx_config != nil {
+		sample_count = graphics.antialiasing_sample_count(gfx_config.antialiasing)
 	}
 	hud_batch := Fps_Batch {
 		batch = graphics.init_batch2d(render_ctx.device, render_ctx.config.format, nil, sample_count),

@@ -43,7 +43,7 @@ gif_frame_worker_proc :: proc(task: thread.Task) {
 handle_resize_system :: proc(
 	resize_events: params.EventReader(windowing.Window_Resized_Event),
 	render_ctx: params.Res(Render_Context),
-	pbr_config: params.Res(Pbr_Config),
+	gfx_config: params.Res(Graphics_Config),
 ) {
 	if render_ctx.ptr == nil || render_ctx.ptr.device == nil do return
 	for event in resize_events.events {
@@ -53,10 +53,12 @@ handle_resize_system :: proc(
 			wgpu.SurfaceConfigure(render_ctx.ptr.surface, &render_ctx.ptr.config)
 			
 			sample_count: u32 = 1
-			if pbr_config.ptr != nil {
-				sample_count = u32(pbr_config.ptr.antialiasing)
+			hdr := false
+			if gfx_config.ptr != nil {
+				sample_count = antialiasing_sample_count(gfx_config.ptr.antialiasing)
+				hdr = gfx_config.ptr.hdr
 			}
-			recreate_msaa_texture(render_ctx.ptr, sample_count)
+			recreate_msaa_texture(render_ctx.ptr, sample_count, hdr)
 		}
 	}
 }

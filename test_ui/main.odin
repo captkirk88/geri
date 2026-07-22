@@ -2,10 +2,12 @@ package main
 
 import "base:runtime"
 import "core:c"
+import "core:fmt"
 import "core:math/linalg"
 import "core:mem"
 import "core:os"
 import "core:strconv"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import "vendor:sdl3"
@@ -13,6 +15,7 @@ import "vendor:sdl3"
 import "../app"
 import "../ecs"
 import "../ecs/params"
+import systems "../ecs/systems"
 import errors "../errors"
 import fps "../fps"
 import graphics "../graphics"
@@ -41,12 +44,19 @@ Grid_Panel_Res :: struct {
 	entity: ecs.Entity,
 }
 
+// Tag component to associate UI element containers with a page index
+Page_Tag :: struct {
+	page_index: int,
+}
+
 Showcase_State :: struct {
 	start_time:     time.Tick,
 	grid_despawned: bool,
 	verified:       bool,
 	box_canvas:     ecs.Entity,
 	box_color:      [4]f32,
+	active_page:    int,
+	page_count:     int,
 }
 
 Scroll_Content_Tag :: struct {}
@@ -54,370 +64,47 @@ Scroll_Content_Tag :: struct {}
 global_tracker: gmem.Tracker
 
 @(tag = "system")
-setup_system :: proc(commands: params.Commands) {
-	// Root Container
+setup_system :: proc(world: ^ecs.World, commands: params.Commands) {
+	// Root Container (100% viewport)
 	root := ecs.commands_spawn(commands.ptr)
 	ecs.entity_commands_add_components(
 		root,
 		ui.UI_Node {
 			width    = {100.0, .Percent},
 			height   = {100.0, .Percent},
-			bg_color = {0.1, 0.1, 0.12, 0.0}, // transparent to reveal rotating box
+			bg_color = {0.1, 0.1, 0.12, 0.0}, // transparent to reveal background
 		},
-		ui.Layout_Flex {
-			direction = .Row,
-			justify_content = .Space_Between,
-			align_items = .Stretch,
-			gap = 20.0,
-		},
+		ui.Layout_Flex{direction = .Column, justify_content = .Center, align_items = .Center},
 	)
 
-	// 1. FLEX PANEL (Left)
-	flex_panel := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		flex_panel,
-		ui.UI_Node {
-			width        = {30.0, .Percent},
-			height       = {100.0, .Percent},
-			margin       = {20.0, 0.0, 20.0, 20.0},
-			padding      = {20.0, 20.0, 20.0, 20.0},
-			bg_color     = {0.18, 0.18, 0.22, 0.8}, // semi-transparent
-			border_color = {0.3, 0.3, 0.4, 1.0},
-			border_width = 2.0,
-		},
-		ui.Layout_Flex {
-			direction = .Column,
-			justify_content = .Start,
-			align_items = .Stretch,
-			gap = 15.0,
-		},
-	)
-	ecs.commands_add_relation(commands.ptr, flex_panel.entity, ui.UI_ChildOf, root.entity)
-
-	// Flex children buttons
-	for i in 0 ..< 3 {
-		btn := ecs.commands_spawn(commands.ptr)
-		grow_val: f32 = (i == 1) ? 1.0 : 0.0 // Second button grows to fill space
-
-		node := ui.UI_Node {
-			width        = {100.0, .Percent},
-			height       = {60.0, .Pixels},
-			bg_color     = {0.25, 0.25, 0.35, 1.0},
-			border_color = {0.4, 0.4, 0.6, 1.0},
-			border_width = 1.0,
-		}
-
-		if i == 0 {
-			node.padding = {18.0, 20.0, 15.0, 20.0} // Vertical centering padding
-			ecs.entity_commands_add_components(
-				btn,
-				ui.Label{text = "[c=yellow][b]Click Me![/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
-			)
-		}
-
-		ecs.entity_commands_add_components(
-			btn,
-			node,
-			ui.Flex_Item{grow = grow_val},
-			ui.Button{},
-			ui.UI_Style {
-				normal = {
-					bg_color = {0.25, 0.25, 0.35, 1.0},
-					border_color = {0.4, 0.4, 0.6, 1.0},
-					border_width = 1.0,
-				},
-				hover = {
-					bg_color = {0.35, 0.35, 0.5, 1.0},
-					border_color = {0.4, 0.4, 0.6, 1.0},
-					border_width = 1.0,
-				},
-				active = {
-					bg_color = {0.5, 0.4, 0.6, 1.0},
-					border_color = {0.4, 0.4, 0.6, 1.0},
-					border_width = 1.0,
-				},
-			},
-		)
-		ecs.commands_add_relation(commands.ptr, btn.entity, ui.UI_ChildOf, flex_panel.entity)
-	}
-
-	// 2. GRID PANEL (Middle)
-	grid_panel := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		grid_panel,
-		ui.UI_Node {
-			width        = {30.0, .Percent},
-			height       = {100.0, .Percent},
-			margin       = {20.0, 0.0, 20.0, 0.0},
-			padding      = {20.0, 20.0, 20.0, 20.0},
-			bg_color     = {0.15, 0.2, 0.18, 0.8}, // semi-transparent
-			border_color = {0.25, 0.4, 0.3, 1.0},
-			border_width = 2.0,
-		},
-		ui.Layout_Grid{columns = 3, rows = 3, column_gap = 10.0, row_gap = 10.0},
-	)
-	ecs.commands_add_relation(commands.ptr, grid_panel.entity, ui.UI_ChildOf, root.entity)
-	// Store grid panel entity so timer system can despawn it
-	ecs.commands_add_resource_no_destroy(commands.ptr, Grid_Panel_Res{entity = grid_panel.entity})
-	// Spawn 3x3 Grid Cells
-	for row in 0 ..< 3 {
-		for col in 0 ..< 3 {
-			idx := row * 3 + col + 1 // 1-based cell index
-			cell := ecs.commands_spawn(commands.ptr)
-			ecs.entity_commands_add_components(
-				cell,
-				ui.UI_Node {
-					width = {100.0, .Percent},
-					height = {100.0, .Percent},
-					bg_color = {0.2, 0.3, 0.25, 1.0},
-					border_color = {0.3, 0.5, 0.4, 1.0},
-					border_width = 1.0,
-				},
-				Grid_Cell{index = idx},
-			)
-			ecs.commands_add_relation(commands.ptr, cell.entity, ui.UI_ChildOf, grid_panel.entity)
-		}
-	}
-
-	// 3. ANCHOR PANEL (Right)
-	anchor_panel := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		anchor_panel,
-		ui.UI_Node {
-			width        = {30.0, .Percent},
-			height       = {100.0, .Percent},
-			margin       = {20.0, 20.0, 20.0, 0.0},
-			padding      = {20.0, 20.0, 20.0, 20.0},
-			bg_color     = {0.22, 0.18, 0.18, 0.8}, // semi-transparent
-			border_color = {0.4, 0.3, 0.3, 1.0},
-			border_width = 2.0,
-		},
-	)
-	ecs.commands_add_relation(commands.ptr, anchor_panel.entity, ui.UI_ChildOf, root.entity)
-
-	// Spawning an anchored child in the center that can be scaled
-	pinch_box := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		pinch_box,
-		ui.UI_Node {
-			width = {150.0, .Pixels},
-			height = {150.0, .Pixels},
-			bg_color = {0.5, 0.25, 0.25, 1.0},
-			border_color = {0.7, 0.4, 0.4, 1.0},
-			border_width = 2.0,
-		},
-		ui.Layout_Anchor {
-			anchor_min = {0.5, 0.5},
-			anchor_max = {0.5, 0.5},
-			offset_min = {0.0, 0.0},
-			offset_max = {0.0, 0.0},
-		},
-		Pinchable_Box{base_width = 150.0, base_height = 150.0, scale = 1.0},
-	)
-	ecs.commands_add_relation(commands.ptr, pinch_box.entity, ui.UI_ChildOf, anchor_panel.entity)
-
-	// Spawn Rotating Box UI Canvas
-	box_canvas := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		box_canvas,
-		ui.UI_Node {
-			width        = {270.0, .Pixels},
-			height       = {250.0, .Pixels},
-			bg_color     = {0.5, 0.15, 0.7, 0.5}, // Initially semi-transparent purple
-			border_color = {0.7, 0.3, 0.9, 1.0},
-			border_width = 2.0,
-			padding      = {10.0, 10.0, 10.0, 10.0},
-		},
-		ui.Layout_Flex {
-			direction = .Row,
-			justify_content = .Space_Between,
-			align_items = .Stretch,
-			gap = 10.0,
-		},
-		ui.UI_Canvas{render_mode = .World_Space, reference_size = {270, 250}},
-		transform.Transform{world_matrix = linalg.MATRIX4F32_IDENTITY},
-	)
-
-	// Scroll Viewport (fixed size, crops view)
-	scroll_viewport := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		scroll_viewport,
-		ui.UI_Node {
-			width = {210.0, .Pixels},
-			height = {100.0, .Percent},
-			bg_color = {0.1, 0.1, 0.12, 0.4},
-			border_color = {0.2, 0.2, 0.25, 0.8},
-			border_width = 1.0,
-			padding = {5, 5, 5, 5},
-			clip_children = true,
-		},
-		// Viewport has no flex layout to let scroll_content exceed bounds or position relative to top
-	)
-	ecs.commands_add_relation(
-		commands.ptr,
-		scroll_viewport.entity,
-		ui.UI_ChildOf,
-		box_canvas.entity,
-	)
-
-	// Scroll Content (contains the items and moves vertically)
-	scroll_content := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		scroll_content,
-		ui.UI_Node{width = {100.0, .Percent}, height = {350.0, .Pixels}},
-		ui.Layout_Flex {
-			direction = .Column,
-			justify_content = .Start,
-			align_items = .Center,
-			gap = 10.0,
-		},
-		Scroll_Content_Tag{},
-	)
-	ecs.commands_add_relation(
-		commands.ptr,
-		scroll_content.entity,
-		ui.UI_ChildOf,
-		scroll_viewport.entity,
-	)
-
-	// Label for slider (demonstrating elision)
-	lbl := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		lbl,
-		ui.UI_Node{width = {180.0, .Pixels}, height = {30.0, .Pixels}, padding = {0, 5, 0, 5}},
-		ui.Label {
-			text = "[c=white][b]Box Color Slider Label Overflow[/b][/c]",
-			color = {1.0, 1.0, 1.0, 1.0},
-			multiline = false,
-		},
-	)
-	ecs.commands_add_relation(commands.ptr, lbl.entity, ui.UI_ChildOf, scroll_content.entity)
-
-	// Color slider
-	sld := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		sld,
-		ui.UI_Node {
-			width = {180.0, .Pixels},
-			height = {20.0, .Pixels},
-			bg_color = {0.2, 0.2, 0.2, 1.0},
-			border_color = {0.4, 0.4, 0.4, 1.0},
-			border_width = 1.0,
-		},
-		ui.Slider {
-			value = 0.5,
-			active_color = {0.8, 0.2, 0.6, 1.0},
-			knob_color = {1.0, 1.0, 1.0, 1.0},
-		},
-	)
-	ecs.commands_add_relation(commands.ptr, sld.entity, ui.UI_ChildOf, scroll_content.entity)
-
-	// Wrapped Multi-line label
-	lbl_wrapped := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		lbl_wrapped,
-		ui.UI_Node{width = {180.0, .Pixels}, height = {45.0, .Pixels}, padding = {2, 2, 2, 2}},
-		ui.Label {
-			text = "[c=cyan]This text wraps inside the box bounds.[/c]",
-			color = {1.0, 1.0, 1.0, 1.0},
-			multiline = true,
-		},
-	)
-	ecs.commands_add_relation(
-		commands.ptr,
-		lbl_wrapped.entity,
-		ui.UI_ChildOf,
-		scroll_content.entity,
-	)
-
-	// Text Input
-	txt := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		txt,
-		ui.UI_Node {
-			width = {180.0, .Pixels},
-			height = {30.0, .Pixels},
-			padding = {5.0, 5.0, 5.0, 5.0},
-			bg_color = {0.1, 0.1, 0.1, 1.0},
-			border_color = {0.4, 0.4, 0.4, 1.0},
-			border_width = 1.0,
-		},
-		ui.TextInput{text = make([dynamic]u8, context.allocator), max_length = 16},
-	)
-	ecs.commands_add_relation(commands.ptr, txt.entity, ui.UI_ChildOf, scroll_content.entity)
-
-	// Extra Label for scrolling
-	lbl_extra := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		lbl_extra,
-		ui.UI_Node{width = {180.0, .Pixels}, height = {30.0, .Pixels}},
-		ui.Label{text = "[c=orange][b]Hidden Content![/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
-	)
-	ecs.commands_add_relation(commands.ptr, lbl_extra.entity, ui.UI_ChildOf, scroll_content.entity)
-
-	// Extra TextInput
-	txt2 := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		txt2,
-		ui.UI_Node {
-			width = {180.0, .Pixels},
-			height = {30.0, .Pixels},
-			padding = {5.0, 5.0, 5.0, 5.0},
-			bg_color = {0.1, 0.1, 0.1, 1.0},
-			border_color = {0.4, 0.4, 0.4, 1.0},
-			border_width = 1.0,
-		},
-		ui.TextInput{text = make([dynamic]u8, context.allocator), max_length = 16},
-	)
-	ecs.commands_add_relation(commands.ptr, txt2.entity, ui.UI_ChildOf, scroll_content.entity)
-
-	// Vertical Scrollbar (positioned on the right side of the canvas)
-	scroller := ecs.commands_spawn(commands.ptr)
-	ecs.entity_commands_add_components(
-		scroller,
-		ui.UI_Node {
-			width = {20.0, .Pixels},
-			height = {100.0, .Percent},
-			bg_color = {0.15, 0.15, 0.2, 1.0},
-			border_color = {0.3, 0.3, 0.4, 1.0},
-			border_width = 1.0,
-		},
-		ui.Scrollbar {
-			value = 0.5,
-			knob_size = 0.4,
-			active_color = {0.15, 0.15, 0.2, 1.0},
-			knob_color = {0.8, 0.5, 0.2, 1.0},
-			vertical = true,
-		},
-		ui.UI_Style {
-			normal = {bg_color = {0.15, 0.15, 0.2, 1.0}, border_color = {0.8, 0.5, 0.2, 1.0}},
-			hover = {bg_color = {0.2, 0.2, 0.25, 1.0}, border_color = {1.0, 0.6, 0.3, 1.0}},
-			active = {bg_color = {0.3, 0.3, 0.35, 1.0}, border_color = {1.0, 0.8, 0.4, 1.0}},
-		},
-	)
-	ecs.commands_add_relation(commands.ptr, scroller.entity, ui.UI_ChildOf, box_canvas.entity)
-
-	// Add showcase state resource
-	ecs.commands_add_resource(
-		commands.ptr,
+	// Add showcase state resource directly to world so immediate system runs can access it
+	ecs.world_add_resource(
+		world,
 		Showcase_State {
 			start_time = time.tick_now(),
 			grid_despawned = false,
 			verified = false,
-			box_canvas = box_canvas.entity,
+			box_canvas = root.entity,
 			box_color = {0.5, 0.15, 0.7, 0.5},
+			active_page = 0,
+			page_count = 5,
 		},
 	)
+
+	// Spawn initial slide 1 via system runner
+	sys := systems.new_system(slide_flex_system)
+	systems.run_system(world, sys)
+	systems.destroy_system(world, sys)
 }
+
 
 // Keyboard input system that highlights grid cells on pressing '1' to '9'
 @(tag = "system")
 keyboard_grid_system :: proc(world: ^ecs.World, key_inp: input.Input(input.KeyCode)) {
 	for arch in ecs.query(world, ui.UI_Node, Grid_Cell) {
-		nodes := ecs.arch_get_field(arch, ui.UI_Node)
-		cells := ecs.arch_get_field(arch, Grid_Cell)
+		nodes, cells, count := ecs.arch_zip(arch, ui.UI_Node, Grid_Cell)
 
-		for i in 0 ..< len(nodes) {
+		for i in 0 ..< count {
 			node := &nodes[i]
 			cell := &cells[i]
 
@@ -471,10 +158,9 @@ gesture_scaling_system :: proc(
 	frame_scale := pinch_delta * gamepad_delta
 
 	for arch in ecs.query(world, ui.UI_Node, Pinchable_Box) {
-		nodes := ecs.arch_get_field(arch, ui.UI_Node)
-		boxes := ecs.arch_get_field(arch, Pinchable_Box)
+		nodes, boxes, count := ecs.arch_zip(arch, ui.UI_Node, Pinchable_Box)
 
-		for i in 0 ..< len(nodes) {
+		for i in 0 ..< count {
 			node := &nodes[i]
 			box := &boxes[i]
 
@@ -483,11 +169,403 @@ gesture_scaling_system :: proc(
 
 			node.width = {box.base_width * box.scale, .Pixels}
 			node.height = {box.base_height * box.scale, .Pixels}
+		}
+	}
+}
 
-			state := ecs.world_get_resource(world, ui.UI_State)
-			if state != nil {
-				state.dirty = true
+
+// --- Separate Slide Showcase Systems ---
+
+@(tag = "system")
+slide_flex_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_State)) {
+	state := showcase_state.ptr
+	if state == nil do return
+
+	flex_panel := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		flex_panel,
+		ui.UI_Node {
+			width = {100.0, .Percent},
+			height = {100.0, .Percent},
+			padding = {15.0, 15.0, 15.0, 15.0},
+			bg_color = {0.18, 0.18, 0.22, 0.8},
+			border_color = {0.3, 0.3, 0.4, 1.0},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		flex_panel,
+		ui.Layout_Flex {
+			direction = .Column,
+			justify_content = .Start,
+			align_items = .Stretch,
+			gap = 15.0,
+		},
+	)
+	ecs.world_add_component(world, flex_panel, Page_Tag{page_index = 0})
+	ecs.world_add_relation(world, flex_panel, ui.UI_ChildOf, state.box_canvas)
+
+	for i in 0 ..< 3 {
+		btn := ecs.world_spawn(world)
+		grow_val: f32 = (i == 1) ? 1.0 : 0.0
+		node := ui.UI_Node {
+			width        = {100.0, .Percent},
+			height       = {60.0, .Pixels},
+			bg_color     = {0.25, 0.25, 0.35, 1.0},
+			border_color = {0.4, 0.4, 0.6, 1.0},
+			border_width = 1.0,
+		}
+		if i == 0 {
+			node.padding = {18.0, 20.0, 15.0, 20.0}
+			ecs.world_add_component(
+				world,
+				btn,
+				ui.Label{text = "[c=yellow][b]Click Me![/b][/c]", color = {1.0, 1.0, 1.0, 1.0}},
+			)
+		}
+		ecs.world_add_component(world, btn, node)
+		ecs.world_add_component(world, btn, ui.Flex_Item{grow = grow_val})
+		ecs.world_add_component(world, btn, ui.Button{})
+		ecs.world_add_component(
+			world,
+			btn,
+			ui.UI_Style {
+				normal = {
+					bg_color = {0.25, 0.25, 0.35, 1.0},
+					border_color = {0.4, 0.4, 0.6, 1.0},
+					border_width = 1.0,
+				},
+				hover = {
+					bg_color = {0.35, 0.35, 0.5, 1.0},
+					border_color = {0.5, 0.5, 0.8, 1.0},
+					border_width = 1.5,
+				},
+				active = {
+					bg_color = {0.5, 0.4, 0.6, 1.0},
+					border_color = {0.7, 0.5, 0.9, 1.0},
+					border_width = 2.0,
+				},
+			},
+		)
+		ecs.world_add_relation(world, btn, ui.UI_ChildOf, flex_panel)
+	}
+}
+
+@(tag = "system")
+slide_grid_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_State)) {
+	state := showcase_state.ptr
+	if state == nil do return
+
+	grid_panel := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		grid_panel,
+		ui.UI_Node {
+			width = {100.0, .Percent},
+			height = {100.0, .Percent},
+			padding = {15.0, 15.0, 15.0, 15.0},
+			bg_color = {0.15, 0.2, 0.18, 0.8},
+			border_color = {0.25, 0.4, 0.3, 1.0},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		grid_panel,
+		ui.Layout_Grid{columns = 3, rows = 3, column_gap = 10.0, row_gap = 10.0},
+	)
+	ecs.world_add_component(world, grid_panel, Page_Tag{page_index = 1})
+	ecs.world_add_relation(world, grid_panel, ui.UI_ChildOf, state.box_canvas)
+
+	for row in 0 ..< 3 {
+		for col in 0 ..< 3 {
+			idx := row * 3 + col + 1
+			cell := ecs.world_spawn(world)
+			ecs.world_add_component(
+				world,
+				cell,
+				ui.UI_Node {
+					width = {100.0, .Percent},
+					height = {100.0, .Percent},
+					bg_color = {0.2, 0.3, 0.25, 1.0},
+					border_color = {0.3, 0.5, 0.4, 1.0},
+					border_width = 1.0,
+				},
+			)
+			ecs.world_add_component(world, cell, Grid_Cell{index = idx})
+			ecs.world_add_relation(world, cell, ui.UI_ChildOf, grid_panel)
+		}
+	}
+}
+
+@(tag = "system")
+slide_selection_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_State)) {
+	state := showcase_state.ptr
+	if state == nil do return
+
+	container := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		container,
+		ui.UI_Node {
+			width = {100.0, .Percent},
+			height = {100.0, .Percent},
+			padding = {15.0, 15.0, 15.0, 15.0},
+			bg_color = {0.15, 0.18, 0.22, 0.6},
+			border_color = {0.3, 0.35, 0.4, 0.8},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		container,
+		ui.Layout_Flex {
+			direction = .Column,
+			justify_content = .Start,
+			align_items = .Start,
+			gap = 15.0,
+		},
+	)
+	ecs.world_add_component(world, container, Page_Tag{page_index = 2})
+	ecs.world_add_relation(world, container, ui.UI_ChildOf, state.box_canvas)
+
+	lbl := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		lbl,
+		ui.UI_Node{width = {100.0, .Percent}, height = {25.0, .Pixels}},
+	)
+	ecs.world_add_component(world, lbl, ui.Label{text = "[c=cyan][b]Selection Controls[/b][/c]"})
+	ecs.world_add_relation(world, lbl, ui.UI_ChildOf, container)
+
+	chk := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		chk,
+		ui.UI_Node {
+			width = {28.0, .Pixels},
+			height = {28.0, .Pixels},
+			bg_color = {0.2, 0.2, 0.2, 1.0},
+			border_color = {0.4, 0.4, 0.4, 1.0},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		chk,
+		ui.Checkbox{checked = true, active_color = {0.2, 0.7, 0.4, 1.0}},
+	)
+	ecs.world_add_relation(world, chk, ui.UI_ChildOf, container)
+
+	rad := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		rad,
+		ui.UI_Node {
+			width = {28.0, .Pixels},
+			height = {28.0, .Pixels},
+			bg_color = {0.2, 0.2, 0.2, 1.0},
+			border_color = {0.4, 0.4, 0.4, 1.0},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		rad,
+		ui.RadioButton{checked = true, active_color = {0.8, 0.4, 0.2, 1.0}},
+	)
+	ecs.world_add_relation(world, rad, ui.UI_ChildOf, container)
+}
+
+@(tag = "system")
+slide_anchor_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_State)) {
+	state := showcase_state.ptr
+	if state == nil do return
+
+	container := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		container,
+		ui.UI_Node {
+			width = {100.0, .Percent},
+			height = {100.0, .Percent},
+			padding = {15.0, 15.0, 15.0, 15.0},
+			bg_color = {0.15, 0.18, 0.22, 0.6},
+			border_color = {0.3, 0.35, 0.4, 0.8},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(world, container, Page_Tag{page_index = 3})
+	ecs.world_add_relation(world, container, ui.UI_ChildOf, state.box_canvas)
+
+	pinch_box := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		pinch_box,
+		ui.UI_Node {
+			width = {140.0, .Pixels},
+			height = {140.0, .Pixels},
+			bg_color = {0.5, 0.25, 0.25, 1.0},
+			border_color = {0.7, 0.4, 0.4, 1.0},
+			border_width = 2.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		pinch_box,
+		ui.Layout_Anchor {
+			anchor_min = {0.5, 0.5},
+			anchor_max = {0.5, 0.5},
+			offset_min = {0.0, 0.0},
+			offset_max = {0.0, 0.0},
+		},
+	)
+	ecs.world_add_component(
+		world,
+		pinch_box,
+		Pinchable_Box{base_width = 140.0, base_height = 140.0, scale = 1.0},
+	)
+	ecs.world_add_relation(world, pinch_box, ui.UI_ChildOf, container)
+}
+
+@(tag = "system")
+slide_text_system :: proc(world: ^ecs.World, showcase_state: params.Res(Showcase_State)) {
+	state := showcase_state.ptr
+	if state == nil do return
+
+	container := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		container,
+		ui.UI_Node {
+			width = {100.0, .Percent},
+			height = {100.0, .Percent},
+			padding = {15.0, 15.0, 15.0, 15.0},
+			bg_color = {0.15, 0.18, 0.22, 0.6},
+			border_color = {0.3, 0.35, 0.4, 0.8},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		container,
+		ui.Layout_Flex {
+			direction = .Column,
+			justify_content = .Start,
+			align_items = .Start,
+			gap = 15.0,
+		},
+	)
+	ecs.world_add_component(world, container, Page_Tag{page_index = 4})
+	ecs.world_add_relation(world, container, ui.UI_ChildOf, state.box_canvas)
+
+	lbl := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		lbl,
+		ui.UI_Node{width = {100.0, .Percent}, height = {25.0, .Pixels}},
+	)
+	ecs.world_add_component(
+		world,
+		lbl,
+		ui.Label{text = "[c=orange][b]Text Input & Progress[/b][/c]"},
+	)
+	ecs.world_add_relation(world, lbl, ui.UI_ChildOf, container)
+
+	txt := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		txt,
+		ui.UI_Node {
+			width = {200.0, .Pixels},
+			height = {32.0, .Pixels},
+			padding = {5.0, 5.0, 5.0, 5.0},
+			bg_color = {0.1, 0.1, 0.1, 1.0},
+			border_color = {0.4, 0.4, 0.4, 1.0},
+			border_width = 1.0,
+		},
+	)
+	ecs.world_add_component(
+		world,
+		txt,
+		ui.TextInput{text = make([dynamic]u8, context.allocator), max_length = 16},
+	)
+	ecs.world_add_relation(world, txt, ui.UI_ChildOf, container)
+
+	pbar := ecs.world_spawn(world)
+	ecs.world_add_component(
+		world,
+		pbar,
+		ui.UI_Node {
+			width = {200.0, .Pixels},
+			height = {20.0, .Pixels},
+			bg_color = {0.2, 0.2, 0.2, 1.0},
+		},
+	)
+	ecs.world_add_component(
+		world,
+		pbar,
+		ui.ProgressBar{value = 0.75, active_color = {0.3, 0.7, 0.9, 1.0}},
+	)
+	ecs.world_add_relation(world, pbar, ui.UI_ChildOf, container)
+}
+
+// Array of showcase system procedures to run on Spacebar keypress
+SHOWCASE_SYSTEMS := [?]rawptr {
+	rawptr(slide_flex_system),
+	rawptr(slide_grid_system),
+	rawptr(slide_selection_system),
+	rawptr(slide_anchor_system),
+	rawptr(slide_text_system),
+}
+
+// System handling Spacebar keypress: clears current showcase entities and runs the next showcase system in SHOWCASE_SYSTEMS array
+@(tag = "system")
+spacebar_showcase_system :: proc(
+	world: ^ecs.World,
+	showcase_state: params.Res(Showcase_State),
+	key_inp: input.Input(input.KeyCode),
+) {
+	state := showcase_state.ptr
+	if state == nil do return
+
+	if input.is_pressed(key_inp, input.KeyCode.Space) {
+		// Advance index in showcase system array
+		state.active_page = (state.active_page + 1) % len(SHOWCASE_SYSTEMS)
+		log.info(
+			"Showcase: Spacebar pressed! Running showcase system %d/%d",
+			state.active_page + 1,
+			len(SHOWCASE_SYSTEMS),
+		)
+
+		// Clear all previous showcase container entities
+		for arch in ecs.query(world, Page_Tag) {
+			entities := ecs.arch_get_entities(arch)
+			for ent in entities {
+				ecs.world_despawn(world, ent)
 			}
+		}
+
+		// Instantiate and execute next system procedure from SHOWCASE_SYSTEMS array via systems.run_system
+		sys: ^systems.System
+		switch state.active_page {
+		case 0:
+			sys = systems.new_system(slide_flex_system)
+		case 1:
+			sys = systems.new_system(slide_grid_system)
+		case 2:
+			sys = systems.new_system(slide_selection_system)
+		case 3:
+			sys = systems.new_system(slide_anchor_system)
+		case 4:
+			sys = systems.new_system(slide_text_system)
+		}
+
+		if sys != nil {
+			systems.run_system(world, sys)
+			systems.destroy_system(world, sys)
 		}
 	}
 }
@@ -702,15 +780,22 @@ main :: proc() {
 		}
 	}
 
+	win_desc := windowing.Window_Descriptor {
+		title      = "Press SPACEBAR!",
+		fullscreen = windowing.DEFAULT_WINDOW_DESCRIPTOR.fullscreen,
+		width      = windowing.DEFAULT_WINDOW_DESCRIPTOR.width,
+		height     = windowing.DEFAULT_WINDOW_DESCRIPTOR.height,
+		resizable  = windowing.DEFAULT_WINDOW_DESCRIPTOR.resizable,
+	}
 	application := errors.unwrap(
 		app.app_init(
-			[]app.Plugin {
-				windowing.Window_Plugin(),
-				graphics.Render_Plugin(),
-				fps.Fps_Plugin(.Uncapped),
-				input.Input_Plugin(),
-				ui.UI_Plugin(),
-			},
+		[]app.Plugin {
+			windowing.Window_Plugin(&win_desc),
+			graphics.Render_Plugin(),
+			//fps.Fps_Plugin(.Uncapped),
+			input.Input_Plugin(),
+			ui.UI_Plugin(),
+		},
 		),
 	)
 	defer {
@@ -723,12 +808,7 @@ main :: proc() {
 	app.app_add_system(&application, app.Update, gesture_scaling_system)
 	app.app_add_system(&application, app.Update, gamepad_showcase_system)
 	app.app_add_system(&application, app.Update, timer_system)
-	app.app_add_system(
-		&application,
-		app.Update,
-		rotating_box_system,
-		before = ui.UI_INTERACTION_SYSTEMS_GROUP,
-	)
+	app.app_add_system(&application, app.Update, spacebar_showcase_system)
 
 	start_time := time.tick_now()
 	take_screenshot := false
